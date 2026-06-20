@@ -54,6 +54,14 @@ pnpm run verify
 
 `pnpm run verify` runs formatting checks, typechecking, lint checks, bundling, and tests.
 
+## Paperback Repository URL
+
+When GitHub Pages is enabled for this repository, install Mutsuki in Paperback from:
+
+```text
+https://indigoxred.github.io/mutsuki/
+```
+
 ## Tested Baseline
 
 - Paperback packages: `@paperback/types` and `@paperback/toolchain` `1.0.0-alpha.92`.
