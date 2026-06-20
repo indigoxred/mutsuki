@@ -23,7 +23,10 @@ import { KavitaClient, type KavitaTransport } from "./client.js";
 import { getKavitaDiscoverItems, getKavitaDiscoverSections } from "./discovery.js";
 import { getKavitaSettings, KavitaSettingsForm } from "./settings.js";
 import { kavitaSeriesIdFromMangaId, sourceMangaFromKavitaSeries } from "./metadata.js";
+import { getKavitaImageChapterDetails, mapKavitaMangaChapters } from "./manga-reader.js";
+import { getNovelChapterDetails, getNovelChaptersFromBook } from "./novel-reader.js";
 import { searchKavita } from "./search.js";
+import { parseKavitaChapterDtos } from "./volume-parser.js";
 
 type KavitaImplementation = Extension &
   SearchResultsProviding &
@@ -85,16 +88,68 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
     );
   }
 
-  async getChapters(_sourceManga: SourceManga, _sinceDate?: Date): Promise<Chapter[]> {
-    return [];
+  async getChapters(sourceManga: SourceManga, _sinceDate?: Date): Promise<Chapter[]> {
+    const client = this.client();
+    const seriesId = kavitaSeriesIdFromMangaId(sourceManga.mangaId);
+    const chapters = parseKavitaChapterDtos(await client.getVolumes(seriesId));
+
+    if (sourceManga.mangaInfo.contentType === "novel") {
+      const nested: Chapter[][] = [];
+      for (const chapter of chapters) {
+        const bookInfo = await client.getBookInfo(chapter.id);
+        const info =
+          typeof bookInfo === "object" && bookInfo !== null
+            ? (bookInfo as Record<string, unknown>)
+            : {};
+        nested.push(
+          await getNovelChaptersFromBook({
+            sourceManga,
+            client,
+            kavitaSeriesId: seriesId,
+            kavitaVolumeId: numberValue(info.volumeId),
+            kavitaChapterId: chapter.id,
+            volumeNumber: Number(chapter.volumeNumber ?? info.volumeNumber ?? 1),
+            totalPages: numberValue(info.pages) ?? chapter.pages,
+          }),
+        );
+      }
+      return nested.flat();
+    }
+
+    return mapKavitaMangaChapters(sourceManga, chapters, client);
   }
 
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
-    return {
-      id: chapter.chapterId,
-      mangaId: chapter.sourceManga.mangaId,
-      pages: [],
-    };
+    const settings = getKavitaSettings();
+    const client = this.client();
+    if (chapter.chapterId.startsWith("kavita-book:")) {
+      return getNovelChapterDetails({
+        sourceManga: chapter.sourceManga,
+        chapter,
+        client,
+        maxResourceBytes: settings.htmlResourceSizeLimit,
+        maxChapterBytes: settings.htmlChapterSizeLimit,
+      });
+    }
+
+    const kavitaChapterId = Number(
+      chapter.additionalInfo?.kavitaChapterId ?? chapter.chapterId.replace(/^kavita-chapter:/u, ""),
+    );
+    const info = await client.getChapterInfo(kavitaChapterId);
+    const record =
+      typeof info === "object" && info !== null ? (info as Record<string, unknown>) : {};
+    return getKavitaImageChapterDetails(
+      chapter.sourceManga,
+      {
+        id: kavitaChapterId,
+        title: chapter.title,
+        chapterNumber: String(chapter.chapNum),
+        volumeNumber: chapter.volume === undefined ? undefined : String(chapter.volume),
+        pages: numberValue(record.pages) ?? numberValue(record.Pages) ?? 0,
+        isSpecial: chapter.additionalInfo?.isSpecial === "true",
+      },
+      client,
+    );
   }
 
   private client(): KavitaClient {
@@ -119,3 +174,7 @@ const paperbackTransport: KavitaTransport = async (request) => {
 };
 
 export const MutsukiKavita = new MutsukiKavitaExtension();
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
