@@ -3,8 +3,8 @@ import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/typ
 export default {
   name: "Mutsuki MyAnimeList",
   description: "Tracks Paperback reading progress to MyAnimeList chapters and completed volumes.",
-  version: "0.1.0",
-  icon: "icon.svg",
+  version: "0.1.1",
+  icon: "icon.png",
   language: "en",
   contentRating: ContentRating.EVERYONE,
   capabilities: [
