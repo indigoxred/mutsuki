@@ -173,7 +173,8 @@ const paperbackTransport: KavitaTransport = async (request) => {
   };
 };
 
-export const MutsukiKavita = new MutsukiKavitaExtension();
+export const Kavita = new MutsukiKavitaExtension();
+export const MutsukiKavita = Kavita;
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;

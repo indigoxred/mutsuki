@@ -114,4 +114,5 @@ const paperbackMalTransport: MalTransport = async (request) => {
   };
 };
 
-export const MutsukiMyAnimeList = new MutsukiMyAnimeListExtension();
+export const MyAnimeList = new MutsukiMyAnimeListExtension();
+export const MutsukiMyAnimeList = MyAnimeList;
