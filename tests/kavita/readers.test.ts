@@ -40,6 +40,61 @@ test("maps image chapters to stable Kavita chapter IDs and authenticated page UR
   ]);
 });
 
+test("does not expose Kavita special chapter sentinel numbers", () => {
+  const chapter = mangaChapterToPaperback({
+    sourceManga: {
+      mangaId: "kavita-series:7",
+      mangaInfo: {
+        thumbnailUrl: "",
+        synopsis: "",
+        primaryTitle: "Series",
+        secondaryTitles: [],
+        contentRating: "SAFE",
+      },
+    },
+    kavitaChapter: {
+      id: 56,
+      title: "Bonus Story",
+      chapterNumber: "10000",
+      volumeNumber: "100000",
+      pages: 2,
+      isSpecial: true,
+    },
+    pageUrl: (page) => `https://kavita.test/page/${page}`,
+    sortingIndex: 4,
+  });
+
+  assert.equal(chapter.chapter.chapNum, 5);
+  assert.equal(chapter.chapter.volume, undefined);
+  assert.equal(chapter.chapter.title, "Bonus Story");
+});
+
+test("falls back to list order for implausibly large Kavita chapter numbers", () => {
+  const chapter = mangaChapterToPaperback({
+    sourceManga: {
+      mangaId: "kavita-series:7",
+      mangaInfo: {
+        thumbnailUrl: "",
+        synopsis: "",
+        primaryTitle: "Series",
+        secondaryTitles: [],
+        contentRating: "SAFE",
+      },
+    },
+    kavitaChapter: {
+      id: 57,
+      title: "Chapter",
+      chapterNumber: "10000",
+      pages: 2,
+      isSpecial: false,
+    },
+    pageUrl: (page) => `https://kavita.test/page/${page}`,
+    sortingIndex: 6,
+  });
+
+  assert.equal(chapter.chapter.chapNum, 7);
+});
+
 test("maps EPUB logical chapters to Paperback HTML chapters with final-volume marker", () => {
   const chapter = novelChapterToPaperback({
     sourceManga: {

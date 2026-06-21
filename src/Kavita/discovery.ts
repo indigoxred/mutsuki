@@ -3,6 +3,8 @@ import {
   DiscoverSectionType,
   type DiscoverSection,
   type DiscoverSectionItem,
+  type Metadata,
+  type PagedResults,
 } from "@paperback/types";
 
 import type { KavitaClient } from "./client.js";
@@ -34,29 +36,40 @@ export async function getKavitaDiscoverItems(
   client: KavitaClient,
   sectionId: string,
   pageSize: number,
-): Promise<DiscoverSectionItem[]> {
+  metadata?: Metadata,
+): Promise<PagedResults<DiscoverSectionItem>> {
+  const pageNumber = pageNumberFromMetadata(metadata);
   const payload =
     sectionId === "all-series"
-      ? await client.getAllSeries(0, pageSize)
+      ? await client.getAllSeries(pageNumber, pageSize)
       : sectionId === "on-deck"
-        ? await client.getOnDeck(0, pageSize)
+        ? await client.getOnDeck(pageNumber, pageSize)
         : sectionId === "recently-updated"
-          ? await client.getRecentlyUpdated(0, pageSize)
+          ? await client.getRecentlyUpdated(pageNumber, pageSize)
           : sectionId === "newly-added"
-            ? await client.getNewlyAdded(0, pageSize)
+            ? await client.getNewlyAdded(pageNumber, pageSize)
             : undefined;
 
   if (payload === undefined) throw new Error(`Unknown Kavita discover section: ${sectionId}`);
 
-  return asArray(payload).map((item) => ({
-    type: sectionId === "recently-updated" ? "chapterUpdatesCarouselItem" : "simpleCarouselItem",
-    mangaId: `kavita-series:${numberField(item, "seriesId", "id") ?? 0}`,
-    chapterId: `kavita-chapter:${numberField(item, "chapterId") ?? 0}`,
-    imageUrl: stringField(item, "coverImage", "imageUrl", "thumbnailUrl") ?? "",
-    title: stringField(item, "name", "title", "seriesName") ?? "Untitled",
-    subtitle: stringField(item, "localizedName", "libraryName"),
-    contentRating: ContentRating.EVERYONE,
-  })) as DiscoverSectionItem[];
+  const records = asArray(payload);
+  const items = records.map((item) => {
+    const seriesId = numberField(item, "seriesId", "id") ?? 0;
+    return {
+      type: sectionId === "recently-updated" ? "chapterUpdatesCarouselItem" : "simpleCarouselItem",
+      mangaId: `kavita-series:${seriesId}`,
+      chapterId: `kavita-chapter:${numberField(item, "chapterId") ?? 0}`,
+      imageUrl: imageUrlForSeries(client, seriesId, item),
+      title: stringField(item, "name", "title", "seriesName") ?? "Untitled",
+      subtitle: stringField(item, "localizedName", "libraryName"),
+      contentRating: ContentRating.EVERYONE,
+    };
+  }) as DiscoverSectionItem[];
+
+  return {
+    items,
+    metadata: records.length >= pageSize ? { page: pageNumber + 1 } : undefined,
+  };
 }
 
 function asArray(payload: unknown): Record<string, unknown>[] {
@@ -90,4 +103,20 @@ function numberField(item: Record<string, unknown>, ...keys: string[]): number |
     if (typeof value === "number") return value;
   }
   return undefined;
+}
+
+function imageUrlForSeries(
+  client: KavitaClient,
+  seriesId: number,
+  item: Record<string, unknown>,
+): string {
+  if (seriesId > 0) return client.getSeriesCoverUrl(seriesId);
+  const raw = stringField(item, "imageUrl", "thumbnailUrl", "coverImage");
+  return raw?.startsWith("http://") || raw?.startsWith("https://") ? raw : "";
+}
+
+function pageNumberFromMetadata(metadata: Metadata | undefined): number {
+  if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return 0;
+  const page = metadata.page;
+  return typeof page === "number" && Number.isSafeInteger(page) && page > 0 ? page : 0;
 }

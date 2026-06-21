@@ -48,12 +48,12 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
 
   async getDiscoverSectionItems(
     section: DiscoverSection,
-    _metadata?: Metadata,
+    metadata?: Metadata,
   ): Promise<PagedResults<DiscoverSectionItem>> {
     const settings = getKavitaSettings();
     if (!settings.baseUrl || !settings.apiKey) return { items: [] };
     try {
-      return { items: await getKavitaDiscoverItems(this.client(), section.id, settings.pageSize) };
+      return await getKavitaDiscoverItems(this.client(), section.id, settings.pageSize, metadata);
     } catch {
       return { items: [] };
     }
@@ -83,8 +83,10 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
         },
       };
     }
+    const client = this.client();
     return sourceMangaFromKavitaSeries(
-      await this.client().getSeriesDetails(kavitaSeriesIdFromMangaId(mangaId)),
+      await client.getSeriesDetails(kavitaSeriesIdFromMangaId(mangaId)),
+      (seriesId) => client.getSeriesCoverUrl(seriesId),
     );
   }
 

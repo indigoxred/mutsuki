@@ -40,6 +40,8 @@ export interface KavitaChapterDto {
   publishDate?: string;
 }
 
+const KAVITA_SENTINEL_READING_NUMBER = 10000;
+
 export function mangaChapterToPaperback(input: {
   sourceManga: SourceMangaLike;
   kavitaChapter: KavitaChapterDto;
@@ -47,9 +49,14 @@ export function mangaChapterToPaperback(input: {
   sortingIndex: number;
 }): { chapter: PaperbackChapterLike; details: ImageChapterDetails } {
   const chapterNumber =
-    parseReadingNumber(input.kavitaChapter.chapterNumber ?? input.kavitaChapter.title)?.value ??
-    input.sortingIndex + 1;
-  const volumeNumber = parseReadingNumber(input.kavitaChapter.volumeNumber)?.value;
+    validChapterOrVolumeNumber(
+      input.kavitaChapter.isSpecial
+        ? undefined
+        : (input.kavitaChapter.chapterNumber ?? input.kavitaChapter.title),
+    ) ?? input.sortingIndex + 1;
+  const volumeNumber = validChapterOrVolumeNumber(
+    input.kavitaChapter.isSpecial ? undefined : input.kavitaChapter.volumeNumber,
+  );
   const chapterId = `kavita-chapter:${input.kavitaChapter.id}`;
 
   const chapter: PaperbackChapterLike = {
@@ -75,6 +82,12 @@ export function mangaChapterToPaperback(input: {
   };
 
   return { chapter, details };
+}
+
+function validChapterOrVolumeNumber(input: string | number | undefined): number | undefined {
+  const parsed = parseReadingNumber(input)?.value;
+  if (parsed === undefined || parsed >= KAVITA_SENTINEL_READING_NUMBER) return undefined;
+  return parsed;
 }
 
 export function novelChapterToPaperback(input: {

@@ -12,12 +12,15 @@ export async function searchKavita(
 
   return items
     .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
-    .map((item) => ({
-      mangaId: `kavita-series:${numberValue(item.id) ?? numberValue(item.seriesId) ?? 0}`,
-      title: stringValue(item.name ?? item.title ?? item.localizedName) ?? "Untitled",
-      imageUrl: stringValue(item.coverImage ?? item.thumbnailUrl ?? item.imageUrl) ?? "",
-      contentRating: ContentRating.EVERYONE,
-    }));
+    .map((item) => {
+      const seriesId = numberValue(item.id) ?? numberValue(item.seriesId) ?? 0;
+      return {
+        mangaId: `kavita-series:${seriesId}`,
+        title: stringValue(item.name ?? item.title ?? item.localizedName) ?? "Untitled",
+        imageUrl: seriesId > 0 ? client.getSeriesCoverUrl(seriesId) : "",
+        contentRating: ContentRating.EVERYONE,
+      };
+    });
 }
 
 function asSearchItems(payload: unknown): unknown[] {

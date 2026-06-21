@@ -1,18 +1,21 @@
 import { ContentRating, type SourceManga } from "@paperback/types";
 
-export function sourceMangaFromKavitaSeries(series: unknown): SourceManga {
+export function sourceMangaFromKavitaSeries(
+  series: unknown,
+  coverUrlForSeries?: (seriesId: number) => string,
+): SourceManga {
   const item =
     typeof series === "object" && series !== null ? (series as Record<string, unknown>) : {};
   const id = numberField(item, "id", "seriesId") ?? 0;
-  const format = stringField(item, "format", "seriesFormat")?.toLowerCase() ?? "";
-  const libraryType = stringField(item, "libraryType")?.toLowerCase() ?? "";
+  const format = kavitaFormatName(item.format ?? item.seriesFormat);
+  const libraryType = stringField(item, "libraryType", "libraryName")?.toLowerCase() ?? "";
   const isNovel =
     format.includes("epub") || libraryType.includes("book") || libraryType.includes("novel");
 
   return {
     mangaId: `kavita-series:${id}`,
     mangaInfo: {
-      thumbnailUrl: stringField(item, "coverImage", "thumbnailUrl", "imageUrl") ?? "",
+      thumbnailUrl: id > 0 && coverUrlForSeries ? coverUrlForSeries(id) : absoluteImageUrl(item),
       synopsis: stringField(item, "summary", "synopsis") ?? "",
       primaryTitle: stringField(item, "name", "title", "localizedName") ?? "Untitled",
       secondaryTitles: arrayOfStrings(item.alternateTitles),
@@ -55,4 +58,18 @@ function numberField(item: Record<string, unknown>, ...keys: string[]): number |
 function arrayOfStrings(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function kavitaFormatName(value: unknown): string {
+  if (typeof value === "string") return value.toLowerCase();
+  if (value === 0) return "image";
+  if (value === 1) return "archive";
+  if (value === 3) return "epub";
+  if (value === 4) return "pdf";
+  return "";
+}
+
+function absoluteImageUrl(item: Record<string, unknown>): string {
+  const raw = stringField(item, "imageUrl", "thumbnailUrl", "coverImage");
+  return raw?.startsWith("http://") || raw?.startsWith("https://") ? raw : "";
 }

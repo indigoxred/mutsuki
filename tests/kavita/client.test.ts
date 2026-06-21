@@ -49,6 +49,10 @@ test("builds authenticated image URLs only for the configured Kavita host", () =
     client.getImagePageUrl({ chapterId: 55, page: 2, extractPdf: true }),
     "https://kavita.example.test/api/Reader/image?chapterId=55&page=2&extractPdf=true&apiKey=secret-key",
   );
+  assert.equal(
+    client.getSeriesCoverUrl(42),
+    "https://kavita.example.test/api/Image/series-cover?seriesId=42&apiKey=secret-key",
+  );
 });
 
 test("uses current Kavita REST routes for browse and search", async () => {

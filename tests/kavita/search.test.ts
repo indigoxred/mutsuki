@@ -16,6 +16,8 @@ test("maps current Kavita grouped search results into Paperback items", async ()
         },
       ],
     }),
+    getSeriesCoverUrl: (seriesId: number) =>
+      `https://kavita.example.test/api/Image/series-cover?seriesId=${seriesId}&apiKey=secret-key`,
   };
 
   const items = await searchKavita(
@@ -28,7 +30,7 @@ test("maps current Kavita grouped search results into Paperback items", async ()
     {
       mangaId: "kavita-series:55",
       title: "Dungeon Meshi",
-      imageUrl: "",
+      imageUrl: "https://kavita.example.test/api/Image/series-cover?seriesId=55&apiKey=secret-key",
       contentRating: ContentRating.EVERYONE,
     },
   ]);

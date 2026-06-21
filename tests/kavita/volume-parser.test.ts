@@ -49,3 +49,52 @@ test("accepts direct chapter arrays and ignores malformed entries", () => {
     },
   ]);
 });
+
+test("uses current Kavita chapter numbering fields and suppresses special sentinels", () => {
+  const chapters = parseKavitaChapterDtos([
+    {
+      number: "1",
+      chapters: [
+        {
+          id: 70,
+          titleName: "Bonus Story",
+          number: "10000",
+          range: "10000",
+          minNumber: 10000,
+          maxNumber: 10000,
+          pages: 4,
+          isSpecial: true,
+        },
+        {
+          id: 71,
+          titleName: "Chapter Six",
+          number: "10000",
+          range: "6",
+          minNumber: 6,
+          maxNumber: 6,
+          pages: 12,
+          isSpecial: false,
+        },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(chapters, [
+    {
+      id: 70,
+      title: "Bonus Story",
+      chapterNumber: undefined,
+      volumeNumber: "1",
+      pages: 4,
+      isSpecial: true,
+    },
+    {
+      id: 71,
+      title: "Chapter Six",
+      chapterNumber: "6",
+      volumeNumber: "1",
+      pages: 12,
+      isSpecial: false,
+    },
+  ]);
+});

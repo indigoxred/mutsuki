@@ -125,6 +125,15 @@ export class KavitaClient {
     return url;
   }
 
+  getSeriesCoverUrl(seriesId: number): string {
+    const url = toKavitaApiUrl(this.baseUrl, "/Image/series-cover", {
+      seriesId,
+      apiKey: this.apiKey,
+    });
+    assertSameOrigin(this.baseUrl, url);
+    return url;
+  }
+
   async markChapterRead(input: {
     seriesId: number;
     chapterId: number;

@@ -23,13 +23,16 @@ function toChapterDto(value: unknown, volumeNumber: string | undefined): KavitaC
   const id = numberValue(value.id ?? value.chapterId);
   if (id === undefined) return [];
   const publishDate = stringValue(value.releaseDate ?? value.created ?? value.lastModified);
+  const isSpecial = booleanValue(value.isSpecial) ?? false;
   const chapter: KavitaChapterDto = {
     id,
-    title: stringValue(value.title ?? value.name ?? value.chapterTitle),
-    chapterNumber: stringValue(value.chapterNumber ?? value.number ?? value.range),
+    title: stringValue(value.titleName ?? value.title ?? value.name ?? value.chapterTitle),
+    chapterNumber: isSpecial
+      ? undefined
+      : stringValue(value.minNumber ?? value.chapterNumber ?? value.number ?? value.range),
     volumeNumber: stringValue(value.volumeNumber) ?? volumeNumber,
     pages: numberValue(value.pages ?? value.pageCount) ?? 0,
-    isSpecial: booleanValue(value.isSpecial) ?? false,
+    isSpecial,
   };
   if (publishDate !== undefined) chapter.publishDate = publishDate;
   return [chapter];
