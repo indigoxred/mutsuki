@@ -26,9 +26,9 @@ test("inlines relative images and CSS url resources as data URLs", async () => {
   });
 
   assert.deepEqual(fetched, [
+    "OPS/chapters/images/Cover Image.png",
     "OPS/style/main.css",
     "OPS/images/bg.png",
-    "OPS/chapters/images/Cover Image.png",
   ]);
   assert.equal(rewritten.html.includes("data:text/css;base64"), false);
   assert.match(rewritten.html, /<style>/);
@@ -72,9 +72,9 @@ test("inlines Kavita book-resource URLs using the embedded file query", async ()
     },
   });
 
-  assert.deepEqual(fetched, ["OEBPS/fonts/Book.ttf", "../Images/Color1.jpg"]);
+  assert.deepEqual(fetched, ["../Images/Color1.jpg"]);
   assert.match(rewritten.html, /data:image\/jpeg;base64,AQID/);
-  assert.match(rewritten.html, /data:font\/ttf;base64,AQID/);
+  assert.doesNotMatch(rewritten.html, /data:font\/ttf/u);
   assert.doesNotMatch(rewritten.html, /read\.example\.test\/api\/book/u);
 });
 
@@ -179,11 +179,11 @@ test("converts protected SVG images and img srcsets to safe data URLs", async ()
   });
 
   assert.deepEqual(fetched, [
-    "images/page-a.jpg",
-    "images/page-b.jpg",
     "images/fallback.jpg",
     "images/small.jpg",
     "images/large.jpg",
+    "images/page-a.jpg",
+    "images/page-b.jpg",
   ]);
   assert.equal(rewritten.html.includes("<svg"), false);
   assert.equal(rewritten.html.includes("xlink:"), false);

@@ -219,3 +219,39 @@ test("flattenKavitaToc removes duplicate page starts while preserving first usef
     ["Chapter 1", "Chapter 2"],
   );
 });
+
+test("keeps insert front matter readable without incrementing narrative numbering", () => {
+  const chapters = logicalChaptersFromToc({
+    kavitaSeriesId: 10,
+    kavitaVolumeId: 20,
+    kavitaChapterId: 30,
+    volumeNumber: 5,
+    totalPages: 12,
+    toc: [
+      { title: "Insert", page: 0 },
+      { title: "Chapter 1: The Day After the Confession", page: 4 },
+      { title: "Afterword", page: 10 },
+    ],
+  });
+
+  assert.deepEqual(
+    chapters.map((chapter) => ({
+      title: chapter.title,
+      chapterNumber: chapter.chapterNumber,
+      isSpecial: chapter.isSpecial,
+      startPage: chapter.startPage,
+      endPage: chapter.endPage,
+    })),
+    [
+      { title: "Insert", chapterNumber: 0, isSpecial: true, startPage: 0, endPage: 3 },
+      {
+        title: "Chapter 1: The Day After the Confession",
+        chapterNumber: 1,
+        isSpecial: false,
+        startPage: 4,
+        endPage: 9,
+      },
+      { title: "Afterword", chapterNumber: 0, isSpecial: true, startPage: 10, endPage: 11 },
+    ],
+  );
+});

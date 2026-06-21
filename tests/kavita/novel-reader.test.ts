@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { ContentRating, type Chapter, type SourceManga } from "@paperback/types";
+import { SaxesParser } from "saxes";
 
 import type { KavitaClient } from "../../src/Kavita/client.js";
 import {
@@ -306,6 +307,120 @@ test("full EPUB diagnostics include sanitized resource and TOC counters", async 
   assert.equal(diagnostic.includes("secret-key"), false);
 });
 
+test("full EPUB preserves text and omits individual illustrations when image-heavy chapters exceed the limit", async () => {
+  const text = repeatedText(230_000);
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (message?: unknown) => {
+    logs.push(String(message));
+  };
+  let details;
+  try {
+    details = await getNovelChapterDetails({
+      sourceManga: novelSourceManga(),
+      chapter: novelChapter({ startPage: 0, endPage: 0 }),
+      client: imageHeavyClient({
+        text,
+        imageCount: 33,
+        imageBytes: 260_000,
+      }),
+      renderingMode: "full-epub",
+      maxResourceBytes: 1_000_000,
+      maxChapterBytes: 8_000_000,
+      debugLogging: true,
+      build: "0.1.5+test",
+      incomingContentType: "novel",
+      resolvedContentType: "novel",
+      kavitaFormat: "epub",
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.equal(details.type, "html");
+  assert.equal("pages" in details, false);
+  assert.ok(htmlByteLength(details.html) <= 8_000_000);
+  assert.ok(htmlByteLength(details.html) > 230_000);
+  assert.equal(details.html.includes("Chapter exceeded configured HTML size limit"), false);
+  assert.equal(details.html.includes("secret-key"), false);
+  assert.equal(details.html.includes("/book-resources?"), false);
+  assert.match(details.html, /mutsuki-omitted-illustration/u);
+  assert.ok(visibleText(details.html).length >= text.length);
+  parseStrictXhtml(details.html);
+
+  const diagnostic = logs.find((line) => line.startsWith("[MutsukiNovel]")) ?? "";
+  assert.match(diagnostic, /sourceVisibleTextCharacters=230000/u);
+  assert.match(diagnostic, /finalVisibleTextCharacters=[1-9]\d+/u);
+  assert.match(diagnostic, /chapterSizeLimitBytes=8000000/u);
+  assert.match(diagnostic, /sizeLimitHit=true/u);
+  assert.match(diagnostic, /textFallbackUsed=false/u);
+  assert.match(diagnostic, /omittedImageCount=[1-9]\d*/u);
+});
+
+test("full EPUB keeps all fitting illustrations below the completed chapter limit", async () => {
+  const text = repeatedText(234_000);
+  const details = await getNovelChapterDetails({
+    sourceManga: novelSourceManga(),
+    chapter: novelChapter({ startPage: 0, endPage: 0 }),
+    client: imageHeavyClient({
+      text,
+      imageCount: 36,
+      imageBytes: 40_000,
+    }),
+    renderingMode: "full-epub",
+    maxResourceBytes: 1_000_000,
+    maxChapterBytes: 8_000_000,
+    debugLogging: false,
+    build: "0.1.5+test",
+    incomingContentType: "novel",
+    resolvedContentType: "novel",
+    kavitaFormat: "epub",
+  });
+
+  assert.equal(details.type, "html");
+  assert.equal("pages" in details, false);
+  assert.ok(htmlByteLength(details.html) <= 8_000_000);
+  assert.equal(details.html.includes("mutsuki-omitted-illustration"), false);
+  assert.equal((details.html.match(/data:image\/jpeg;base64/gu) ?? []).length, 36);
+  assert.ok(visibleText(details.html).length >= text.length);
+  parseStrictXhtml(details.html);
+});
+
+test("full EPUB falls back to complete plain text when semantic markup cannot fit", async () => {
+  const text = repeatedText(6_000);
+  const details = await getNovelChapterDetails({
+    sourceManga: novelSourceManga(),
+    chapter: novelChapter({ startPage: 0, endPage: 0 }),
+    client: {
+      async getBookInfo() {
+        return { pages: 1 };
+      },
+      async getBookPage() {
+        return `<section><h1>Oversized</h1><table><tr><td>${text}</td></tr></table></section>`;
+      },
+      async getBookResource() {
+        throw new Error("no resources expected");
+      },
+    } as unknown as KavitaClient,
+    renderingMode: "full-epub",
+    maxResourceBytes: 1_000,
+    maxChapterBytes: 1_000,
+    debugLogging: false,
+    build: "0.1.5+test",
+    incomingContentType: "novel",
+    resolvedContentType: "novel",
+    kavitaFormat: "epub",
+  });
+
+  assert.equal(details.type, "html");
+  assert.equal("pages" in details, false);
+  assert.ok(details.html.startsWith('<html xmlns="http://www.w3.org/1999/xhtml">'));
+  assert.ok(visibleText(details.html).length >= text.length);
+  assert.equal(details.html.includes("Chapter exceeded configured HTML size limit"), false);
+  assert.equal(details.html.includes("secret-key"), false);
+  parseStrictXhtml(details.html);
+});
+
 function novelSourceManga(): SourceManga {
   return {
     mangaId: "kavita-series:7",
@@ -336,6 +451,45 @@ function novelChapter(input: { startPage: number; endPage: number }): Chapter {
   };
 }
 
+function imageHeavyClient(input: {
+  text: string;
+  imageCount: number;
+  imageBytes: number;
+}): KavitaClient {
+  return {
+    async getBookInfo() {
+      return { pages: 1 };
+    },
+    async getBookPage() {
+      return [
+        `<section><p>${input.text}</p>`,
+        ...Array.from({ length: input.imageCount }, (_unused, index) =>
+          [
+            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="kavita-scale-width">',
+            `<image xlink:href="https://read.negev.red/api/Book/55/book-resources?file=images%2Fplate-${index}.jpg&apiKey=secret-key"></image>`,
+            "</svg>",
+          ].join(""),
+        ),
+        "</section>",
+      ].join("");
+    },
+    async getBookResource(_chapterId: number, path: string) {
+      const seed = path.length % 255;
+      const bytes = new Uint8Array(input.imageBytes);
+      bytes.fill(seed);
+      return { bytes: bytes.buffer, mimeType: "image/jpeg" };
+    },
+  } as unknown as KavitaClient;
+}
+
+function repeatedText(length: number): string {
+  return "A".repeat(length);
+}
+
+function htmlByteLength(html: string): number {
+  return new TextEncoder().encode(html).byteLength;
+}
+
 function visibleText(html: string): string {
   return html
     .replace(/<script\b[\s\S]*?<\/script>/giu, " ")
@@ -343,4 +497,14 @@ function visibleText(html: string): string {
     .replace(/<[^>]+>/gu, " ")
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+function parseStrictXhtml(html: string): void {
+  const parser = new SaxesParser({ xmlns: true });
+  let parseError: Error | undefined;
+  parser.on("error", (error) => {
+    parseError = error;
+  });
+  parser.write(html).close();
+  if (parseError) throw parseError;
 }

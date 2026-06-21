@@ -8,7 +8,10 @@ import {
   type NovelRenderingMode,
 } from "./novel-rendering-mode.js";
 import {
+  createChapterResourceBudget,
+  omittedIllustrationPlaceholder,
   rewriteHtmlResources,
+  type ChapterResourceBudget,
   type ResourceFetchCache,
   type ResourceRewriteStats,
 } from "./resource-rewriter.js";
@@ -38,6 +41,7 @@ export async function getNovelChaptersFromBook(input: {
   kavitaVolumeId?: number;
   kavitaChapterId: number;
   volumeNumber?: number;
+  fallbackTitle?: string;
   totalPages: number;
 }): Promise<Chapter[]> {
   if (!Number.isFinite(input.totalPages) || input.totalPages < 1) return [];
@@ -48,6 +52,7 @@ export async function getNovelChaptersFromBook(input: {
     kavitaVolumeId: input.kavitaVolumeId,
     kavitaChapterId: input.kavitaChapterId,
     volumeNumber: input.volumeNumber,
+    fallbackTitle: input.fallbackTitle,
     totalPages: input.totalPages,
     toc,
   }).map(
@@ -103,6 +108,18 @@ export async function getNovelChapterDetails(input: {
       fetchedPageCount: 0,
       htmlBytes: htmlByteLength(details.html),
       visibleTextCharacters: extractVisibleText(details.html).length,
+      sourceHtmlBytes: 0,
+      sourceVisibleTextCharacters: extractVisibleText(details.html).length,
+      projectedHtmlBytesBeforeBudget: htmlByteLength(details.html),
+      finalHtmlBytes: htmlByteLength(details.html),
+      finalVisibleTextCharacters: extractVisibleText(details.html).length,
+      chapterSizeLimitBytes: input.maxChapterBytes,
+      sizeLimitHit: false,
+      textFallbackUsed: false,
+      inlinedResourceCount: 0,
+      inlinedResourceBytes: 0,
+      omittedImageCount: 0,
+      omittedCssAssetCount: 0,
       missingResourceCount: 0,
       missingStylesheetCount: 0,
       rewrittenHtmlImageCount: 0,
@@ -141,6 +158,18 @@ export async function getNovelChapterDetails(input: {
       fetchedPageCount: 1,
       htmlBytes: htmlByteLength(details.html),
       visibleTextCharacters: visibleText.length,
+      sourceHtmlBytes: htmlByteLength(page),
+      sourceVisibleTextCharacters: visibleText.length,
+      projectedHtmlBytesBeforeBudget: htmlByteLength(details.html),
+      finalHtmlBytes: htmlByteLength(details.html),
+      finalVisibleTextCharacters: extractVisibleText(details.html).length,
+      chapterSizeLimitBytes: input.maxChapterBytes,
+      sizeLimitHit: false,
+      textFallbackUsed: false,
+      inlinedResourceCount: 0,
+      inlinedResourceBytes: 0,
+      omittedImageCount: 0,
+      omittedCssAssetCount: 0,
       missingResourceCount: 0,
       missingStylesheetCount: 0,
       rewrittenHtmlImageCount: 0,
@@ -157,7 +186,18 @@ export async function getNovelChapterDetails(input: {
 
   const resourceCache: ResourceFetchCache = new Map();
   const rewriteStats = emptyResourceRewriteStats();
-  const html = await assembleHtmlChapter({
+  const sourceHtml = pages.join("");
+  const sourceHtmlBytes = htmlByteLength(sourceHtml);
+  const sourceVisibleText = extractVisibleText(sourceHtml);
+  const projectedHtmlBytesBeforeBudget = estimateResourceFreeChapterBytes(
+    input.chapter.title ?? `Chapter ${input.chapter.chapNum}`,
+    pages,
+  );
+  const resourceBudget = createChapterResourceBudget(
+    input.maxChapterBytes,
+    projectedHtmlBytesBeforeBudget,
+  );
+  let html = await assembleHtmlChapter({
     title: input.chapter.title ?? `Chapter ${input.chapter.chapNum}`,
     pages,
     rewriteResources: async (fragment) =>
@@ -170,8 +210,21 @@ export async function getNovelChapterDetails(input: {
         client: input.client,
         resourceCache,
         rewriteStats,
+        resourceBudget,
       }),
   });
+  const finalized = enforceCompletedHtmlLimit({
+    html,
+    maxChapterBytes: input.maxChapterBytes,
+    sourceVisibleText,
+  });
+  html = finalized.html;
+  rewriteStats.sizeLimitHit ||= resourceBudget.sizeLimitHit || finalized.sizeLimitHit;
+  rewriteStats.inlinedResourceCount = resourceBudget.inlinedResourceCount;
+  rewriteStats.inlinedResourceBytes = resourceBudget.inlinedResourceBytes;
+  rewriteStats.omittedImageCount = resourceBudget.omittedImageCount + finalized.omittedImageCount;
+  rewriteStats.omittedCssAssetCount =
+    resourceBudget.omittedCssAssetCount + finalized.omittedCssAssetCount;
 
   const details: HtmlChapterDetails = {
     id: input.chapter.chapterId,
@@ -186,7 +239,19 @@ export async function getNovelChapterDetails(input: {
     endPage,
     fetchedPageCount: pages.length,
     htmlBytes: htmlByteLength(details.html),
-    visibleTextCharacters: extractVisibleText(pages.join(" ")).length,
+    visibleTextCharacters: sourceVisibleText.length,
+    sourceHtmlBytes,
+    sourceVisibleTextCharacters: sourceVisibleText.length,
+    projectedHtmlBytesBeforeBudget,
+    finalHtmlBytes: htmlByteLength(details.html),
+    finalVisibleTextCharacters: extractVisibleText(details.html).length,
+    chapterSizeLimitBytes: input.maxChapterBytes,
+    sizeLimitHit: rewriteStats.sizeLimitHit,
+    textFallbackUsed: finalized.textFallbackUsed,
+    inlinedResourceCount: rewriteStats.inlinedResourceCount,
+    inlinedResourceBytes: rewriteStats.inlinedResourceBytes,
+    omittedImageCount: rewriteStats.omittedImageCount,
+    omittedCssAssetCount: rewriteStats.omittedCssAssetCount,
     missingResourceCount: rewriteStats.missingResourceCount,
     missingStylesheetCount: rewriteStats.missingStylesheetCount,
     rewrittenHtmlImageCount: rewriteStats.rewrittenHtmlImageCount,
@@ -205,6 +270,7 @@ async function rewriteAndTrackResources(input: {
   client: KavitaClient;
   resourceCache: ResourceFetchCache;
   rewriteStats: ResourceRewriteStats;
+  resourceBudget: ChapterResourceBudget;
 }): Promise<string> {
   const rewritten = await rewriteHtmlResources({
     html: input.fragment,
@@ -212,10 +278,103 @@ async function rewriteAndTrackResources(input: {
     maxResourceBytes: input.maxResourceBytes,
     maxChapterBytes: input.maxChapterBytes,
     resourceCache: input.resourceCache,
+    resourceBudget: input.resourceBudget,
     fetchResource: async (path) => input.client.getBookResource(input.kavitaChapterId, path),
   });
   mergeResourceRewriteStats(input.rewriteStats, rewritten.stats);
   return rewritten.html;
+}
+
+function estimateResourceFreeChapterBytes(title: string, pages: string[]): number {
+  const strippedPages = pages.map(stripResourceReferencesForBudget).join("");
+  return htmlByteLength(
+    [
+      '<html xmlns="http://www.w3.org/1999/xhtml">',
+      "<head>",
+      '<meta charset="utf-8">',
+      '<meta name="viewport" content="width=device-width, initial-scale=1">',
+      `<title>${escapeXml(title)}</title>`,
+      "<style>body{line-height:1.65;margin:0;padding:1rem;}img{max-width:100%;height:auto;}table{max-width:100%;}</style>",
+      "</head>",
+      "<body>",
+      strippedPages,
+      "</body>",
+      "</html>",
+    ].join(""),
+  );
+}
+
+function stripResourceReferencesForBudget(html: string): string {
+  return html
+    .replace(/<link\b[^>]*\brel\s*=\s*(["'])[^"']*\bstylesheet\b[^"']*\1[^>]*>/giu, "")
+    .replace(/@import\s+(?:url\(\s*)?(?:(["'])([^"']+)\1|([^"')\s;]+))\s*\)?[^;]*;/giu, "")
+    .replace(/url\(\s*(["']?)(?!data:|#)([^"')]+)\1\s*\)/giu, "none")
+    .replace(/<svg\b[\s\S]*?<\/svg>/giu, omittedIllustrationPlaceholder(""))
+    .replace(/<img\b([^>]*)>/giu, (_match: string, attributes: string) => {
+      const alt = extractAttribute(attributes, "alt") ?? "";
+      return omittedIllustrationPlaceholder(alt);
+    });
+}
+
+function enforceCompletedHtmlLimit(input: {
+  html: string;
+  maxChapterBytes: number;
+  sourceVisibleText: string;
+}): {
+  html: string;
+  sizeLimitHit: boolean;
+  textFallbackUsed: boolean;
+  omittedImageCount: number;
+  omittedCssAssetCount: number;
+} {
+  let html = input.html;
+  let sizeLimitHit = htmlByteLength(html) > input.maxChapterBytes;
+  let textFallbackUsed = false;
+  let omittedImageCount = 0;
+  let omittedCssAssetCount = 0;
+
+  if (sizeLimitHit) {
+    const withoutCssDataUrls = html.replace(/url\(\s*(["'])data:[^"')]+\1\s*\)/giu, () => {
+      omittedCssAssetCount += 1;
+      return "none";
+    });
+    html = withoutCssDataUrls;
+  }
+
+  while (htmlByteLength(html) > input.maxChapterBytes) {
+    const replaced = replaceLastDataImage(html, () => {
+      omittedImageCount += 1;
+    });
+    if (replaced === html) break;
+    html = replaced;
+    sizeLimitHit = true;
+  }
+
+  if (
+    htmlByteLength(html) > input.maxChapterBytes ||
+    (input.sourceVisibleText.length > 0 && extractVisibleText(html).length === 0)
+  ) {
+    html = wrapPlainTextAsXhtml(input.sourceVisibleText);
+    textFallbackUsed = true;
+    sizeLimitHit = true;
+  }
+
+  return { html, sizeLimitHit, textFallbackUsed, omittedImageCount, omittedCssAssetCount };
+}
+
+function replaceLastDataImage(html: string, onReplace: () => void): string {
+  const dataImagePattern = /<img\b(?=[^>]*\bsrc\s*=\s*(["'])data:image\/[\s\S]*?\1)[^>]*\/?>/giu;
+  const matches = [...html.matchAll(dataImagePattern)];
+  const match = matches.at(-1);
+  if (match?.index === undefined) return html;
+  const imageHtml = match[0];
+  const alt = extractAttribute(imageHtml, "alt") ?? "";
+  onReplace();
+  return (
+    html.slice(0, match.index) +
+    omittedIllustrationPlaceholder(alt) +
+    html.slice(match.index + imageHtml.length)
+  );
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -329,6 +488,15 @@ function escapeXml(text: string): string {
     .replace(/'/gu, "&apos;");
 }
 
+function extractAttribute(html: string, name: string): string | undefined {
+  const match = new RegExp(`(?:^|\\s)${escapeRegex(name)}\\s*=\\s*(["'])(.*?)\\1`, "iu").exec(html);
+  return match?.[2];
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 function assertHtmlNovelDetails(details: ChapterDetails): asserts details is HtmlChapterDetails {
   const record = details as Record<string, unknown>;
   if (record.type !== "html") throw new Error("Invalid Kavita EPUB details type.");
@@ -349,6 +517,11 @@ function emptyResourceRewriteStats(): ResourceRewriteStats {
     rewrittenHtmlImageCount: 0,
     rewrittenSvgImageCount: 0,
     unresolvedNamespacePrefixCount: 0,
+    sizeLimitHit: false,
+    inlinedResourceCount: 0,
+    inlinedResourceBytes: 0,
+    omittedImageCount: 0,
+    omittedCssAssetCount: 0,
   };
 }
 
@@ -361,6 +534,11 @@ function mergeResourceRewriteStats(
   target.rewrittenHtmlImageCount += source.rewrittenHtmlImageCount;
   target.rewrittenSvgImageCount += source.rewrittenSvgImageCount;
   target.unresolvedNamespacePrefixCount += source.unresolvedNamespacePrefixCount;
+  target.sizeLimitHit ||= source.sizeLimitHit;
+  target.inlinedResourceCount += source.inlinedResourceCount;
+  target.inlinedResourceBytes += source.inlinedResourceBytes;
+  target.omittedImageCount += source.omittedImageCount;
+  target.omittedCssAssetCount += source.omittedCssAssetCount;
 }
 
 function countUnresolvedNamespacePrefixes(html: string): number {
@@ -380,6 +558,18 @@ function logNovelDiagnostic(input: {
   fetchedPageCount: number;
   htmlBytes: number;
   visibleTextCharacters: number;
+  sourceHtmlBytes: number;
+  sourceVisibleTextCharacters: number;
+  projectedHtmlBytesBeforeBudget: number;
+  finalHtmlBytes: number;
+  finalVisibleTextCharacters: number;
+  chapterSizeLimitBytes: number;
+  sizeLimitHit: boolean;
+  textFallbackUsed: boolean;
+  inlinedResourceCount: number;
+  inlinedResourceBytes: number;
+  omittedImageCount: number;
+  omittedCssAssetCount: number;
   missingResourceCount: number;
   missingStylesheetCount: number;
   rewrittenHtmlImageCount: number;
@@ -406,6 +596,18 @@ function logNovelDiagnostic(input: {
       `fetchedPageCount=${input.fetchedPageCount}`,
       `htmlBytes=${input.htmlBytes}`,
       `visibleTextCharacters=${input.visibleTextCharacters}`,
+      `sourceHtmlBytes=${input.sourceHtmlBytes}`,
+      `sourceVisibleTextCharacters=${input.sourceVisibleTextCharacters}`,
+      `projectedHtmlBytesBeforeBudget=${input.projectedHtmlBytesBeforeBudget}`,
+      `finalHtmlBytes=${input.finalHtmlBytes}`,
+      `finalVisibleTextCharacters=${input.finalVisibleTextCharacters}`,
+      `chapterSizeLimitBytes=${input.chapterSizeLimitBytes}`,
+      `sizeLimitHit=${input.sizeLimitHit}`,
+      `textFallbackUsed=${input.textFallbackUsed}`,
+      `inlinedResourceCount=${input.inlinedResourceCount}`,
+      `inlinedResourceBytes=${input.inlinedResourceBytes}`,
+      `omittedImageCount=${input.omittedImageCount}`,
+      `omittedCssAssetCount=${input.omittedCssAssetCount}`,
       `missingResourceCount=${input.missingResourceCount}`,
       `missingStylesheetCount=${input.missingStylesheetCount}`,
       `rewrittenHtmlImageCount=${input.rewrittenHtmlImageCount}`,

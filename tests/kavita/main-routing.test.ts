@@ -162,6 +162,102 @@ test("EPUB chapters derive sane volumes and global sorting across physical books
   );
 });
 
+test("EPUB physical books preserve decimal volumes, whole-book names, inserts, and global order", async () => {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (message?: unknown) => {
+    logs.push(String(message));
+  };
+  try {
+    installApplicationStub({
+      settings: { debugLogging: true },
+      scheduleRequest: angelAndBakaScheduleRequest,
+    });
+
+    const chapters = await new MutsukiKavitaExtension().getChapters(
+      series({ contentType: "comic" }),
+    );
+
+    assert.deepEqual(
+      unique(chapters.map((chapter) => chapter.volume).filter((volume) => volume !== undefined)),
+      [1, 2, 3, 4, 5, 5.5, 6, 7, 8, 8.5, 9, 10.5, 12],
+    );
+    assert.deepEqual(
+      chapters.map((chapter) => chapter.sortingIndex),
+      Array.from({ length: chapters.length }, (_unused, index) => index),
+    );
+    assert.equal(new Set(chapters.map((chapter) => chapter.chapterId)).size, chapters.length);
+
+    const aroundFive = chapters.filter((chapter) => [5, 5.5, 6].includes(chapter.volume ?? -1));
+    assert.deepEqual(
+      aroundFive.map((chapter) => ({
+        volume: chapter.volume,
+        chapNum: chapter.chapNum,
+        title: chapter.title,
+        isSpecial: chapter.additionalInfo?.isSpecial,
+      })),
+      [
+        { volume: 5, chapNum: 0, title: "Insert", isSpecial: "true" },
+        {
+          volume: 5,
+          chapNum: 1,
+          title: "Chapter 1: The Day After the Confession",
+          isSpecial: "false",
+        },
+        { volume: 5.5, chapNum: 0, title: "Insert", isSpecial: "true" },
+        { volume: 6, chapNum: 0, title: "Insert", isSpecial: "true" },
+        { volume: 6, chapNum: 1, title: "Chapter 1: Volume 6", isSpecial: "false" },
+      ],
+    );
+
+    const aroundEight = chapters.filter((chapter) => [8, 8.5, 9].includes(chapter.volume ?? -1));
+    assert.deepEqual(
+      aroundEight.map((chapter) => ({
+        volume: chapter.volume,
+        chapNum: chapter.chapNum,
+        title: chapter.title,
+        isSpecial: chapter.additionalInfo?.isSpecial,
+      })),
+      [
+        { volume: 8, chapNum: 0, title: "Insert", isSpecial: "true" },
+        {
+          volume: 8,
+          chapNum: 1,
+          title: "Chapter 1: An Important Promise with the Angel",
+          isSpecial: "false",
+        },
+        { volume: 8.5, chapNum: 0, title: "Insert", isSpecial: "true" },
+        { volume: 9, chapNum: 0, title: "Insert", isSpecial: "true" },
+        { volume: 9, chapNum: 1, title: "Chapter 1: Volume 9", isSpecial: "false" },
+      ],
+    );
+
+    const baka105 = chapters.find(
+      (chapter) => chapter.title === "Baka to Tesuto to Syokanju:Volume10.5",
+    );
+    assert.equal(baka105?.volume, 10.5);
+    assert.equal(baka105?.chapNum, 1);
+
+    const baka12 = chapters.find(
+      (chapter) => chapter.title === "Baka to Tesuto to Syokanju:Volume12",
+    );
+    assert.equal(baka12?.volume, 12);
+    assert.equal(baka12?.chapNum, 1);
+
+    const miso = chapters.find((chapter) => chapter.title === "(2005) In the Miso Soup");
+    assert.equal(miso?.volume, undefined);
+    assert.equal(miso?.chapNum, 1);
+
+    const orderLines = logs.filter((line) => line.startsWith("[MutsukiNovelOrder]"));
+    assert.equal(orderLines.length, 14);
+    assert.ok(orderLines.some((line) => /resolvedVolume=5\.5/u.test(line)));
+    assert.ok(orderLines.some((line) => /resolvedVolume=8\.5/u.test(line)));
+    assert.ok(orderLines.every((line) => !line.includes("secret-key")));
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test("manga chapters still route to image-page details", async () => {
   installApplicationStub({
     scheduleRequest: async (request) => {
@@ -216,6 +312,137 @@ function jsonResponse(body: unknown) {
     { status: 200, headers: { "content-type": "application/json" } },
     new TextEncoder().encode(JSON.stringify(body)).buffer,
   ];
+}
+
+function angelAndBakaScheduleRequest(request: KavitaRequest): Promise<unknown> {
+  const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === "/api/Series/7") {
+    return Promise.resolve(
+      jsonResponse({
+        id: 7,
+        name: "The Angel Next Door Spoils Me Rotten",
+        format: 3,
+        libraryName: "Light Novels",
+      }),
+    );
+  }
+  if (request.method === "GET" && url.pathname === "/api/Series/volumes") {
+    return Promise.resolve(
+      jsonResponse([
+        volumeContainer("8", [
+          physicalChapter(808, "The Angel Next Door Spoils Me Rotten Volume 8.5", 1),
+          physicalChapter(807, "The Angel Next Door Spoils Me Rotten Volume 8", 2),
+        ]),
+        volumeContainer("5", [
+          physicalChapter(805, "The Angel Next Door Spoils Me Rotten Volume 5.5", 3),
+          physicalChapter(804, "The Angel Next Door Spoils Me Rotten Volume 5", 4),
+        ]),
+        volumeContainer("1", [
+          physicalChapter(800, "The Angel Next Door Spoils Me Rotten Volume 1", 5),
+        ]),
+        volumeContainer("2", [
+          physicalChapter(801, "The Angel Next Door Spoils Me Rotten Volume 2", 6),
+        ]),
+        volumeContainer("3", [
+          physicalChapter(802, "The Angel Next Door Spoils Me Rotten Volume 3", 7),
+        ]),
+        volumeContainer("4", [
+          physicalChapter(803, "The Angel Next Door Spoils Me Rotten Volume 4", 8),
+        ]),
+        volumeContainer("6", [
+          physicalChapter(806, "The Angel Next Door Spoils Me Rotten Volume 6", 9),
+        ]),
+        volumeContainer("7", [
+          physicalChapter(809, "The Angel Next Door Spoils Me Rotten Volume 7", 10),
+        ]),
+        volumeContainer("9", [
+          physicalChapter(810, "The Angel Next Door Spoils Me Rotten Volume 9", 11),
+        ]),
+        volumeContainer("10", [physicalChapter(900, "Baka to Tesuto to Syokanju:Volume10.5", 12)]),
+        volumeContainer("12", [physicalChapter(901, "Baka to Tesuto to Syokanju:Volume12", 13)]),
+        volumeContainer("-100000", [physicalChapter(902, "(2005) In the Miso Soup", 14)]),
+      ]),
+    );
+  }
+
+  const id = Number(url.pathname.match(/\/api\/Book\/(\d+)\/(?:book-info|chapters)$/u)?.[1]);
+  if (!Number.isSafeInteger(id)) {
+    return Promise.reject(new Error(`Unexpected request ${request.method} ${url.pathname}`));
+  }
+
+  if (request.method === "GET" && url.pathname.endsWith("/book-info")) {
+    return Promise.resolve(jsonResponse(bookInfoFor(id)));
+  }
+  if (request.method === "GET" && url.pathname.endsWith("/chapters")) {
+    return Promise.resolve(jsonResponse(tocFor(id)));
+  }
+  return Promise.reject(new Error(`Unexpected request ${request.method} ${url.pathname}`));
+}
+
+function volumeContainer(number: string, chapters: unknown[]): Record<string, unknown> {
+  return { number, chapters };
+}
+
+function physicalChapter(id: number, title: string, pages: number): Record<string, unknown> {
+  return { id, title, pages };
+}
+
+function bookInfoFor(id: number): Record<string, unknown> {
+  const titles: Record<number, string> = {
+    800: "The Angel Next Door Spoils Me Rotten Volume 1",
+    801: "The Angel Next Door Spoils Me Rotten Volume 2",
+    802: "The Angel Next Door Spoils Me Rotten Volume 3",
+    803: "The Angel Next Door Spoils Me Rotten Volume 4",
+    804: "The Angel Next Door Spoils Me Rotten Volume 5",
+    805: "The Angel Next Door Spoils Me Rotten Volume 5.5",
+    806: "The Angel Next Door Spoils Me Rotten Volume 6",
+    807: "The Angel Next Door Spoils Me Rotten Volume 8",
+    808: "The Angel Next Door Spoils Me Rotten Volume 8.5",
+    809: "The Angel Next Door Spoils Me Rotten Volume 7",
+    810: "The Angel Next Door Spoils Me Rotten Volume 9",
+    900: "Baka to Tesuto to Syokanju:Volume10.5",
+    901: "Baka to Tesuto to Syokanju:Volume12",
+    902: "(2005) In the Miso Soup",
+  };
+  const rawVolumes: Record<number, string> = {
+    805: "5",
+    808: "8",
+    900: "10",
+    902: "-100000",
+  };
+  return {
+    volumeId: id + 10_000,
+    volumeNumber: rawVolumes[id] ?? parseTitleVolume(titles[id]),
+    bookTitle: titles[id],
+    seriesName: "The Angel Next Door Spoils Me Rotten",
+    pages: id === 900 || id === 901 || id === 902 ? 1 : 12,
+  };
+}
+
+function tocFor(id: number): unknown[] {
+  if (id === 900 || id === 901 || id === 902) return [{ title: "Broken", page: 200 }];
+  const specialOnly = id === 805 || id === 808;
+  if (specialOnly) return [{ title: "Insert", page: 0 }];
+  const titles: Record<number, string> = {
+    804: "Chapter 1: The Day After the Confession",
+    807: "Chapter 1: An Important Promise with the Angel",
+  };
+  return [
+    { title: "Insert", page: 0 },
+    {
+      title: titles[id] ?? `Chapter 1: Volume ${parseTitleVolume(bookInfoFor(id).bookTitle)}`,
+      page: 4,
+    },
+  ];
+}
+
+function parseTitleVolume(title: unknown): string {
+  const match = /Volume\s*(\d+(?:\.\d+)?)/u.exec(String(title));
+  return match?.[1] ?? "-100000";
+}
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values)];
 }
 
 function series(input: { contentType?: "comic" | "novel" }): SourceManga {

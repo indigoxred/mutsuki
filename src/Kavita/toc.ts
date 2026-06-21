@@ -1,4 +1,4 @@
-import { classifySpecialTitle, parseReadingNumber } from "../shared/numbers.js";
+import { classifySpecialTitle, parseChapterNumber } from "../shared/numbers.js";
 import type { KavitaTocItem, MutsukiLogicalChapter } from "./models.js";
 
 export interface LogicalChapterInput {
@@ -6,6 +6,7 @@ export interface LogicalChapterInput {
   kavitaVolumeId?: number;
   kavitaChapterId: number;
   volumeNumber?: number;
+  fallbackTitle?: string;
   totalPages: number;
   toc: KavitaTocItem[];
 }
@@ -118,7 +119,8 @@ function fallbackPhysicalVolumeChapter(
   parsedWordChapterNumberCount: number,
 ): MutsukiLogicalChapter {
   const title =
-    input.volumeNumber === undefined ? "Book" : `Volume ${Number(input.volumeNumber).toString()}`;
+    input.fallbackTitle?.trim() ||
+    (input.volumeNumber === undefined ? "Book" : `Volume ${Number(input.volumeNumber).toString()}`);
   return {
     kavitaSeriesId: input.kavitaSeriesId,
     kavitaVolumeId: input.kavitaVolumeId,
@@ -151,7 +153,7 @@ function nextFallbackNumber(input: {
 
   if (classifySpecialTitle(input.title)) {
     return {
-      chapterNumber: Math.max(1, input.narrativeFallbackNumber + 1),
+      chapterNumber: 0,
       narrativeFallbackNumber: input.narrativeFallbackNumber,
     };
   }
@@ -165,14 +167,14 @@ function isStructuralTocTitle(title: string): boolean {
 }
 
 function validReadingNumber(title: string): number | undefined {
-  const parsed = parseReadingNumber(title)?.value;
+  const parsed = parseChapterNumber(title)?.value;
   if (parsed === undefined || parsed >= KAVITA_SENTINEL_READING_NUMBER) return undefined;
   return parsed;
 }
 
 function hasParsedWordReadingNumber(title: string): boolean {
   if (validReadingNumber(title) === undefined) return false;
-  return /\b(?:chapter|volume|vol\.?|ch\.?|part)\s+[a-z]+(?:[-\s]+[a-z]+)?/iu.test(title);
+  return /\b(?:chapter|ch\.?)\s+[a-z]+(?:[-\s]+[a-z]+)?/iu.test(title);
 }
 
 function normalizedTocTitle(title: string, fallbackNumber: number): string {

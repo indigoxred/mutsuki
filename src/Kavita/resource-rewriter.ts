@@ -9,6 +9,18 @@ export interface ResourceRewriteInput {
   maxChapterBytes: number;
   fetchResource: (path: string) => Promise<ResourceFetchResult | undefined>;
   resourceCache?: ResourceFetchCache;
+  resourceBudget?: ChapterResourceBudget;
+}
+
+export interface ChapterResourceBudget {
+  limitBytes: number;
+  baseDocumentBytes: number;
+  reservedResourceBytes: number;
+  inlinedResourceCount: number;
+  inlinedResourceBytes: number;
+  omittedImageCount: number;
+  omittedCssAssetCount: number;
+  sizeLimitHit: boolean;
 }
 
 export interface ResourceRewriteStats {
@@ -17,6 +29,11 @@ export interface ResourceRewriteStats {
   rewrittenHtmlImageCount: number;
   rewrittenSvgImageCount: number;
   unresolvedNamespacePrefixCount: number;
+  sizeLimitHit: boolean;
+  inlinedResourceCount: number;
+  inlinedResourceBytes: number;
+  omittedImageCount: number;
+  omittedCssAssetCount: number;
 }
 
 export interface ResourceRewriteResult {
@@ -31,9 +48,12 @@ interface RewriteContext {
   stats: ResourceRewriteStats;
   resourceCache: ResourceFetchCache;
   missingStylesheetPaths: Set<string>;
+  budget: ChapterResourceBudget;
 }
 
 const MAX_CSS_IMPORT_DEPTH = 8;
+const DATA_URL_PREFIX_BYTES = "data:;base64,".length;
+const DEFAULT_BUDGET_SAFETY_MARGIN_BYTES = 16_384;
 
 export async function rewriteHtmlResources(
   input: ResourceRewriteInput,
@@ -44,21 +64,40 @@ export async function rewriteHtmlResources(
     stats: emptyStats(),
     resourceCache: input.resourceCache ?? new Map(),
     missingStylesheetPaths: new Set(),
+    budget:
+      input.resourceBudget ??
+      createChapterResourceBudget(input.maxChapterBytes, utf8ByteLength(input.html)),
   };
   let html = input.html;
 
+  html = await rewriteHtmlImageElements(html, context);
+  html = await rewriteSvgImageWrappers(html, context);
   html = await rewriteStylesheets(html, context);
   html = await rewriteInlineStyleBlocks(html, context);
-  html = await rewriteSvgImageWrappers(html, context);
-  html = await rewriteHtmlImageElements(html, context);
-
-  if (utf8ByteLength(html) > input.maxChapterBytes) {
-    context.warnings.push("Generated chapter HTML exceeded the configured size limit.");
-    html = `<p data-mutsuki-missing-resource="chapter-size-limit">Chapter exceeded configured HTML size limit.</p>`;
-  }
 
   context.stats.unresolvedNamespacePrefixCount = countUnresolvedNamespacePrefixes(html);
   return { html, warnings: context.warnings, stats: context.stats };
+}
+
+export function createChapterResourceBudget(
+  limitBytes: number,
+  baseDocumentBytes: number,
+): ChapterResourceBudget {
+  const safeLimit = Number.isFinite(limitBytes) && limitBytes > 0 ? limitBytes : 8_000_000;
+  const safeBase = Math.max(0, Number.isFinite(baseDocumentBytes) ? baseDocumentBytes : 0);
+  return {
+    limitBytes: safeLimit,
+    baseDocumentBytes: safeBase,
+    reservedResourceBytes: Math.min(
+      safeLimit,
+      safeBase + Math.min(DEFAULT_BUDGET_SAFETY_MARGIN_BYTES, Math.floor(safeLimit * 0.05)),
+    ),
+    inlinedResourceCount: 0,
+    inlinedResourceBytes: 0,
+    omittedImageCount: 0,
+    omittedCssAssetCount: 0,
+    sizeLimitHit: false,
+  };
 }
 
 function emptyStats(): ResourceRewriteStats {
@@ -68,6 +107,11 @@ function emptyStats(): ResourceRewriteStats {
     rewrittenHtmlImageCount: 0,
     rewrittenSvgImageCount: 0,
     unresolvedNamespacePrefixCount: 0,
+    sizeLimitHit: false,
+    inlinedResourceCount: 0,
+    inlinedResourceBytes: 0,
+    omittedImageCount: 0,
+    omittedCssAssetCount: 0,
   };
 }
 
@@ -162,8 +206,15 @@ async function rewriteCssUrls(
   return replaceAsync(css, urlPattern, async (match: string, _quote: string, href: string) => {
     const path = resolveFetchableResourcePath(stylesheetPath, href.trim());
     if (path === undefined) return match;
+    if (isFontResourcePath(path)) {
+      context.stats.omittedCssAssetCount += 1;
+      context.budget.omittedCssAssetCount += 1;
+      return "none";
+    }
     const resource = await fetchBounded(path, context);
-    return resource ? `url("${toDataUrl(resource)}")` : "none";
+    if (!resource || isFontResource(resource, path)) return "none";
+    const dataUrl = reserveDataUrl(resource, context, "css", 'url("")'.length);
+    return dataUrl ? `url("${dataUrl}")` : "none";
   });
 }
 
@@ -195,8 +246,13 @@ async function rewriteSvgImageWrappers(html: string, context: RewriteContext): P
         return missingResourcePlaceholder(path, imageAltText(svgAttributes, imageAttributes));
       }
 
+      const dataUrl = reserveDataUrl(resource, context, "image", svgImageMarkupOverheadBytes());
+      if (!dataUrl) {
+        return omittedIllustrationPlaceholder(imageAltText(svgAttributes, imageAttributes));
+      }
+
       context.stats.rewrittenSvgImageCount += 1;
-      return svgImageToXhtmlImage(resource, svgAttributes, imageAttributes);
+      return svgImageToXhtmlImage(dataUrl, svgAttributes, imageAttributes);
     },
   );
 }
@@ -218,7 +274,11 @@ async function rewriteHtmlImageElements(html: string, context: RewriteContext): 
             extractAttribute(attributes, "alt") ?? "Image unavailable",
           );
         }
-        attributes = setAttribute(attributes, "src", toDataUrl(resource));
+        const dataUrl = reserveDataUrl(resource, context, "image", attributes.length + 32);
+        if (!dataUrl) {
+          return omittedIllustrationPlaceholder(extractAttribute(attributes, "alt") ?? "");
+        }
+        attributes = setAttribute(attributes, "src", dataUrl);
         rewritten = true;
       }
     }
@@ -262,7 +322,12 @@ async function rewriteSrcset(
 
     rewritten = true;
     const resource = await fetchBounded(path, context);
-    if (resource) candidates.push(`${toDataUrl(resource)}${match[2] ?? ""}`);
+    if (resource) {
+      const dataUrl = reserveDataUrl(resource, context, "image", candidate.length + 16);
+      if (dataUrl) {
+        candidates.push(`${dataUrl}${match[2] ?? ""}`);
+      }
+    }
   }
 
   return { value: candidates.length > 0 ? candidates.join(", ") : undefined, rewritten };
@@ -304,8 +369,13 @@ function missingResourcePlaceholder(path: string, label: string): string {
   return `<span data-mutsuki-missing-resource="${escapeAttribute(path)}">${escapeHtml(label)}</span>`;
 }
 
+export function omittedIllustrationPlaceholder(label: string): string {
+  const suffix = label.trim() ? ` ${escapeHtml(label.trim())}` : "";
+  return `<span class="mutsuki-omitted-illustration" data-mutsuki-omitted-resource="size-limit">Illustration omitted because the chapter size limit was reached.${suffix}</span>`;
+}
+
 function svgImageToXhtmlImage(
-  resource: ResourceFetchResult,
+  dataUrl: string,
   svgAttributes: string,
   imageAttributes: string,
 ): string {
@@ -318,7 +388,7 @@ function svgImageToXhtmlImage(
   const height =
     extractAttribute(imageAttributes, "height") ?? extractAttribute(svgAttributes, "height");
   return [
-    `<img src="${toDataUrl(resource)}"`,
+    `<img src="${escapeAttribute(dataUrl)}"`,
     ` alt="${escapeAttribute(imageAltText(svgAttributes, imageAttributes))}"`,
     className ? ` class="${escapeAttribute(className)}"` : "",
     width ? ` width="${escapeAttribute(width)}"` : "",
@@ -404,6 +474,54 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
     output += i + 2 < bytes.length ? alphabet[triple & 63] : "=";
   }
   return output;
+}
+
+function reserveDataUrl(
+  resource: ResourceFetchResult,
+  context: RewriteContext,
+  kind: "image" | "css",
+  outputMarkupOverheadBytes: number,
+): string | undefined {
+  const projectedBytes = projectedDataUrlByteLength(resource) + outputMarkupOverheadBytes;
+  if (context.budget.reservedResourceBytes + projectedBytes > context.budget.limitBytes) {
+    context.budget.sizeLimitHit = true;
+    context.stats.sizeLimitHit = true;
+    if (kind === "image") {
+      context.stats.omittedImageCount += 1;
+      context.budget.omittedImageCount += 1;
+    } else {
+      context.stats.omittedCssAssetCount += 1;
+      context.budget.omittedCssAssetCount += 1;
+    }
+    return undefined;
+  }
+
+  context.budget.reservedResourceBytes += projectedBytes;
+  context.budget.inlinedResourceCount += 1;
+  context.budget.inlinedResourceBytes += projectedBytes;
+  context.stats.inlinedResourceCount += 1;
+  context.stats.inlinedResourceBytes += projectedBytes;
+  return toDataUrl(resource);
+}
+
+function projectedDataUrlByteLength(resource: ResourceFetchResult): number {
+  return (
+    DATA_URL_PREFIX_BYTES +
+    (resource.mimeType || "application/octet-stream").length +
+    4 * Math.ceil(resource.bytes.byteLength / 3)
+  );
+}
+
+function svgImageMarkupOverheadBytes(): number {
+  return '<img src="" alt="" class="kavita-scale-width" />'.length + 48;
+}
+
+function isFontResource(resource: ResourceFetchResult, path: string): boolean {
+  return resource.mimeType.toLowerCase().startsWith("font/") || isFontResourcePath(path);
+}
+
+function isFontResourcePath(path: string): boolean {
+  return /\.(?:ttf|otf|woff2?)$/iu.test(path);
 }
 
 function extractAttribute(html: string, name: string): string | undefined {

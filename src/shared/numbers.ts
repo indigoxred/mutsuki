@@ -4,7 +4,7 @@ export interface ReadingNumber {
 }
 
 const SPECIAL_TITLE_PATTERN =
-  /\b(prologue|epilogue|afterword|side\s*story|bonus|special|extra|interlude)\b/iu;
+  /\b(prologue|epilogue|afterword|side\s*story|bonus|special|extra|interlude|insert|inserts|illustration|illustrations|color\s*illustration|color\s*illustrations|frontispiece|character\s*page|gallery)\b/iu;
 
 export function parsePositiveInteger(input: string | number | undefined): number | undefined {
   if (input === undefined) return undefined;
@@ -15,18 +15,34 @@ export function parsePositiveInteger(input: string | number | undefined): number
 }
 
 export function parseReadingNumber(input: string | number | undefined): ReadingNumber | undefined {
+  return parseChapterNumber(input) ?? parseVolumeNumber(input);
+}
+
+export function parseChapterNumber(input: string | number | undefined): ReadingNumber | undefined {
+  if (input === undefined) return undefined;
+  const text = String(input).trim();
+  return parsePrefixedNumber(text, /\b(?:chapter|ch\.?)\s*/iu);
+}
+
+export function parseVolumeNumber(input: string | number | undefined): ReadingNumber | undefined {
   if (input === undefined) return undefined;
   const text = String(input).trim();
   const standalone = /^\d+(?:\.\d+)?$/u.exec(text)?.[0];
-  const numericMatch =
-    standalone ?? /\b(?:chapter|volume|vol\.?|ch\.?|part)\s*(\d+(?:\.\d+)?)/iu.exec(text)?.[1];
+  const parsed =
+    (standalone === undefined ? undefined : readingNumberFromNumericText(standalone)) ??
+    parsePrefixedNumber(text, /\b(?:volume|vol\.?|v|book|part)\s*/iu);
+  if (!parsed || isRejectedReadingNumber(parsed.value)) return undefined;
+  return parsed;
+}
+
+function parsePrefixedNumber(input: string, markerPattern: RegExp): ReadingNumber | undefined {
+  const markerMatch = markerPattern.exec(input);
+  if (!markerMatch) return undefined;
+  const afterMarker = input.slice(markerMatch.index + markerMatch[0].length).trim();
+  const numericMatch = /^(\d+(?:\.\d+)?)/u.exec(afterMarker)?.[1];
   if (numericMatch !== undefined) return readingNumberFromNumericText(numericMatch);
-
-  const prefixedText = /\b(?:chapter|volume|vol\.?|ch\.?|part)\s+([a-z]+(?:[-\s]+[a-z]+)?)/iu.exec(
-    text,
-  )?.[1];
+  const prefixedText = /^([a-z]+(?:[-\s]+[a-z]+)?)/iu.exec(afterMarker)?.[1];
   if (!prefixedText) return undefined;
-
   for (const candidate of numberTextCandidates(prefixedText)) {
     const roman = romanNumeralValue(candidate);
     if (roman !== undefined) return { value: roman, isDecimal: false };
@@ -36,6 +52,10 @@ export function parseReadingNumber(input: string | number | undefined): ReadingN
   }
 
   return undefined;
+}
+
+function isRejectedReadingNumber(value: number): boolean {
+  return !Number.isFinite(value) || value < 0 || value === 10000 || value === -100000;
 }
 
 export function classifySpecialTitle(title: string | undefined): boolean {

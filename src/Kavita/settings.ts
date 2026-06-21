@@ -176,7 +176,8 @@ export class KavitaSettingsForm extends Form {
         }),
         StepperRow("chapter-limit", {
           title: "Chapter Limit",
-          subtitle: "Bytes per generated HTML chapter.",
+          subtitle:
+            "Maximum completed HTML size. Text is preserved and excess illustrations are omitted.",
           value: this.settings.htmlChapterSizeLimit,
           minValue: 500_000,
           maxValue: 30_000_000,

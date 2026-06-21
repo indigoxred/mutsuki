@@ -19,7 +19,7 @@ import {
   type SourceManga,
 } from "@paperback/types";
 
-import { parseReadingNumber } from "../shared/numbers.js";
+import { parseVolumeNumber } from "../shared/numbers.js";
 import { MUTSUKI_KAVITA_BUILD } from "./build-info.js";
 import { KavitaClient, type KavitaTransport } from "./client.js";
 import { getKavitaDiscoverItems, getKavitaDiscoverSections } from "./discovery.js";
@@ -104,23 +104,50 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
     if (serverSourceManga.mangaInfo.contentType === "novel") {
       const novelSourceManga = correctedNovelSourceManga(sourceManga, serverSourceManga);
       const novelChapters: Chapter[] = [];
-      for (const chapter of chapters) {
-        const bookInfo = await client.getBookInfo(chapter.id);
-        const info =
-          typeof bookInfo === "object" && bookInfo !== null
-            ? (bookInfo as Record<string, unknown>)
-            : {};
-        novelChapters.push(
-          ...(await getNovelChaptersFromBook({
-            sourceManga: novelSourceManga,
-            client,
-            kavitaSeriesId: seriesId,
-            kavitaVolumeId: numberValue(info.volumeId),
+      const physicalBooks = await Promise.all(
+        chapters.map(async (chapter, index): Promise<PhysicalNovelBook> => {
+          const bookInfo = await client.getBookInfo(chapter.id);
+          const info =
+            typeof bookInfo === "object" && bookInfo !== null
+              ? (bookInfo as Record<string, unknown>)
+              : {};
+          return {
             kavitaChapterId: chapter.id,
-            volumeNumber: resolveNovelVolumeNumber(chapter, info),
-            totalPages: numberValue(info.pages) ?? chapter.pages,
-          })),
-        );
+            kavitaVolumeId: numberValue(info.volumeId),
+            sourceVolumeIndex: index,
+            sourceChapterIndex: index,
+            originalVolumeNumber: chapter.volumeNumber,
+            resolvedVolume: resolveNovelVolume(chapter, info),
+            title: stringValue(info.bookTitle) ?? chapter.title,
+            range: chapter.chapterNumber,
+            fileName: stringValue(info.fileName ?? info.filename ?? info.filePath),
+            pageCount: numberValue(info.pages) ?? chapter.pages,
+            chapter,
+          };
+        }),
+      );
+
+      const sortedBooks = [...physicalBooks].sort(comparePhysicalNovelBooks);
+      for (const book of sortedBooks) {
+        const firstSortingIndex = novelChapters.length;
+        const expanded = await getNovelChaptersFromBook({
+          sourceManga: novelSourceManga,
+          client,
+          kavitaSeriesId: seriesId,
+          kavitaVolumeId: book.kavitaVolumeId,
+          kavitaChapterId: book.kavitaChapterId,
+          volumeNumber: book.resolvedVolume.value,
+          fallbackTitle: book.title,
+          totalPages: book.pageCount,
+        });
+        novelChapters.push(...expanded);
+        logNovelOrder({
+          book,
+          logicalChapterCount: expanded.length,
+          firstSortingIndex,
+          lastSortingIndex: novelChapters.length - 1,
+          debugLogging: getKavitaSettings().debugLogging,
+        });
       }
       return novelChapters.map((chapter, sortingIndex) => ({ ...chapter, sortingIndex }));
     }
@@ -199,26 +226,157 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-function resolveNovelVolumeNumber(
+interface ResolvedNovelVolume {
+  value?: number;
+  source:
+    | "book-title"
+    | "book-metadata"
+    | "chapter-title"
+    | "file-range"
+    | "kavita-volume"
+    | "series-title"
+    | "unknown";
+  confidence: number;
+  isDecimal: boolean;
+}
+
+interface PhysicalNovelBook {
+  kavitaChapterId: number;
+  kavitaVolumeId?: number;
+  sourceVolumeIndex: number;
+  sourceChapterIndex: number;
+  originalVolumeNumber?: string;
+  resolvedVolume: ResolvedNovelVolume;
+  title?: string;
+  range?: string;
+  fileName?: string;
+  pageCount: number;
+  chapter: { title?: string; volumeNumber?: string };
+}
+
+function resolveNovelVolume(
   chapter: { title?: string; volumeNumber?: string },
   bookInfo: Record<string, unknown>,
-): number | undefined {
+): ResolvedNovelVolume {
+  const rawKavitaVolume =
+    validStandaloneVolume(bookInfo.volumeNumber) ?? validStandaloneVolume(chapter.volumeNumber);
+  const candidates = [
+    bookTitleVolumeCandidate(stringValue(bookInfo.bookTitle), rawKavitaVolume),
+    resolvedVolumeCandidate("book-metadata", bookInfo.volumeNumber, 90, "standalone"),
+    resolvedVolumeCandidate("chapter-title", chapter.title, 80, "marker"),
+    resolvedVolumeCandidate(
+      "file-range",
+      stringValue(bookInfo.range ?? bookInfo.fileName ?? bookInfo.filename ?? bookInfo.filePath),
+      75,
+      "marker",
+    ),
+    resolvedVolumeCandidate("kavita-volume", chapter.volumeNumber, 70, "standalone"),
+    resolvedVolumeCandidate("series-title", stringValue(bookInfo.seriesName), 50, "marker"),
+  ].filter((candidate): candidate is ResolvedNovelVolume => candidate.value !== undefined);
+
+  candidates.sort(
+    (a, b) => b.confidence - a.confidence || Number(b.isDecimal) - Number(a.isDecimal),
+  );
   return (
-    validNovelVolumeNumber(chapter.volumeNumber) ??
-    validNovelVolumeNumber(bookInfo.volumeNumber) ??
-    parseReadingNumber(stringValue(bookInfo.bookTitle))?.value ??
-    parseReadingNumber(chapter.title)?.value ??
-    parseReadingNumber(stringValue(bookInfo.seriesName))?.value
+    candidates[0] ?? {
+      value: undefined,
+      source: "unknown",
+      confidence: 0,
+      isDecimal: false,
+    }
   );
 }
 
-function validNovelVolumeNumber(value: unknown): number | undefined {
+function resolvedVolumeCandidate(
+  source: ResolvedNovelVolume["source"],
+  value: unknown,
+  confidence: number,
+  mode: "marker" | "standalone",
+): ResolvedNovelVolume {
   const parsed =
-    typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : NaN;
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed === 10000 || parsed === -100000) {
+    mode === "standalone" ? validStandaloneVolume(value) : parseVolumeNumber(stringValue(value));
+  if (parsed === undefined) {
+    return { value: undefined, source: "unknown", confidence: 0, isDecimal: false };
+  }
+  return { value: parsed.value, source, confidence, isDecimal: parsed.isDecimal };
+}
+
+function bookTitleVolumeCandidate(
+  title: string | undefined,
+  rawKavitaVolume: { value: number; isDecimal: boolean } | undefined,
+): ResolvedNovelVolume {
+  const explicit = resolvedVolumeCandidate("book-title", title, 100, "marker");
+  if (explicit.value !== undefined) return explicit;
+  const refined = trailingDecimalRefinement(title, rawKavitaVolume);
+  if (refined !== undefined) {
+    return { value: refined, source: "book-title", confidence: 100, isDecimal: true };
+  }
+  return { value: undefined, source: "unknown", confidence: 0, isDecimal: false };
+}
+
+function trailingDecimalRefinement(
+  title: string | undefined,
+  rawKavitaVolume: { value: number; isDecimal: boolean } | undefined,
+): number | undefined {
+  if (title === undefined || rawKavitaVolume === undefined || rawKavitaVolume.isDecimal) {
     return undefined;
   }
+  const decimalText = /\b(\d+\.\d+)\s*$/u.exec(title.trim())?.[1];
+  if (decimalText === undefined) return undefined;
+  const decimal = Number(decimalText);
+  if (!Number.isFinite(decimal) || Math.trunc(decimal) !== rawKavitaVolume.value) {
+    return undefined;
+  }
+  return decimal;
+}
+
+function validStandaloneVolume(value: unknown): { value: number; isDecimal: boolean } | undefined {
+  if (value === undefined) return undefined;
+  const text =
+    typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : "";
+  if (!/^\d+(?:\.\d+)?$/u.test(text)) return undefined;
+  const parsed = parseVolumeNumber(text);
   return parsed;
+}
+
+function comparePhysicalNovelBooks(a: PhysicalNovelBook, b: PhysicalNovelBook): number {
+  const aVolume = a.resolvedVolume.value;
+  const bVolume = b.resolvedVolume.value;
+  if (aVolume !== undefined && bVolume !== undefined && aVolume !== bVolume) {
+    return aVolume - bVolume;
+  }
+  if (aVolume !== undefined && bVolume === undefined) return -1;
+  if (aVolume === undefined && bVolume !== undefined) return 1;
+  return (
+    a.sourceVolumeIndex - b.sourceVolumeIndex ||
+    a.sourceChapterIndex - b.sourceChapterIndex ||
+    a.kavitaChapterId - b.kavitaChapterId
+  );
+}
+
+function logNovelOrder(input: {
+  book: PhysicalNovelBook;
+  logicalChapterCount: number;
+  firstSortingIndex: number;
+  lastSortingIndex: number;
+  debugLogging: boolean;
+}): void {
+  if (!input.debugLogging) return;
+  console.log(
+    [
+      "[MutsukiNovelOrder]",
+      `chapterId=${input.book.kavitaChapterId}`,
+      `sourceVolumeIndex=${input.book.sourceVolumeIndex}`,
+      `sourceChapterIndex=${input.book.sourceChapterIndex}`,
+      `rawVolume=${input.book.originalVolumeNumber ?? ""}`,
+      `bookTitleVolume=${parseVolumeNumber(input.book.title)?.value ?? ""}`,
+      `resolvedVolume=${input.book.resolvedVolume.value ?? ""}`,
+      `resolutionSource=${input.book.resolvedVolume.source}`,
+      `logicalChapterCount=${input.logicalChapterCount}`,
+      `firstSortingIndex=${input.firstSortingIndex}`,
+      `lastSortingIndex=${input.lastSortingIndex}`,
+    ].join(" "),
+  );
 }
 
 function correctedNovelSourceManga(
