@@ -7,7 +7,11 @@ import {
   novelRenderingModeDiagnosticName,
   type NovelRenderingMode,
 } from "./novel-rendering-mode.js";
-import { rewriteHtmlResources } from "./resource-rewriter.js";
+import {
+  rewriteHtmlResources,
+  type ResourceFetchCache,
+  type ResourceRewriteStats,
+} from "./resource-rewriter.js";
 import { logicalChaptersFromToc } from "./toc.js";
 
 const STATIC_PROBE_PARAGRAPH =
@@ -33,7 +37,7 @@ export async function getNovelChaptersFromBook(input: {
   kavitaSeriesId: number;
   kavitaVolumeId?: number;
   kavitaChapterId: number;
-  volumeNumber: number;
+  volumeNumber?: number;
   totalPages: number;
 }): Promise<Chapter[]> {
   if (!Number.isFinite(input.totalPages) || input.totalPages < 1) return [];
@@ -79,6 +83,8 @@ export async function getNovelChapterDetails(input: {
     incomingContentType: input.incomingContentType,
     resolvedContentType: input.resolvedContentType,
     kavitaFormat: input.kavitaFormat,
+    structuralTocEntriesFiltered: diagnosticCount(info.structuralTocEntriesFiltered),
+    parsedWordChapterNumberCount: diagnosticCount(info.parsedWordChapterNumberCount),
     debugLogging: input.debugLogging,
   };
 
@@ -97,6 +103,11 @@ export async function getNovelChapterDetails(input: {
       fetchedPageCount: 0,
       htmlBytes: htmlByteLength(details.html),
       visibleTextCharacters: extractVisibleText(details.html).length,
+      missingResourceCount: 0,
+      missingStylesheetCount: 0,
+      rewrittenHtmlImageCount: 0,
+      rewrittenSvgImageCount: 0,
+      unresolvedNamespacePrefixCount: 0,
     });
     return details;
   }
@@ -130,6 +141,11 @@ export async function getNovelChapterDetails(input: {
       fetchedPageCount: 1,
       htmlBytes: htmlByteLength(details.html),
       visibleTextCharacters: visibleText.length,
+      missingResourceCount: 0,
+      missingStylesheetCount: 0,
+      rewrittenHtmlImageCount: 0,
+      rewrittenSvgImageCount: 0,
+      unresolvedNamespacePrefixCount: 0,
     });
     return details;
   }
@@ -139,19 +155,22 @@ export async function getNovelChapterDetails(input: {
     pages.push(await input.client.getBookPage(kavitaChapterId, page));
   }
 
+  const resourceCache: ResourceFetchCache = new Map();
+  const rewriteStats = emptyResourceRewriteStats();
   const html = await assembleHtmlChapter({
     title: input.chapter.title ?? `Chapter ${input.chapter.chapNum}`,
     pages,
     rewriteResources: async (fragment) =>
-      (
-        await rewriteHtmlResources({
-          html: fragment,
-          basePath: `page-${startPage}.xhtml`,
-          maxResourceBytes: input.maxResourceBytes,
-          maxChapterBytes: input.maxChapterBytes,
-          fetchResource: async (path) => input.client.getBookResource(kavitaChapterId, path),
-        })
-      ).html,
+      rewriteAndTrackResources({
+        fragment,
+        startPage,
+        maxResourceBytes: input.maxResourceBytes,
+        maxChapterBytes: input.maxChapterBytes,
+        kavitaChapterId,
+        client: input.client,
+        resourceCache,
+        rewriteStats,
+      }),
   });
 
   const details: HtmlChapterDetails = {
@@ -168,8 +187,35 @@ export async function getNovelChapterDetails(input: {
     fetchedPageCount: pages.length,
     htmlBytes: htmlByteLength(details.html),
     visibleTextCharacters: extractVisibleText(pages.join(" ")).length,
+    missingResourceCount: rewriteStats.missingResourceCount,
+    missingStylesheetCount: rewriteStats.missingStylesheetCount,
+    rewrittenHtmlImageCount: rewriteStats.rewrittenHtmlImageCount,
+    rewrittenSvgImageCount: rewriteStats.rewrittenSvgImageCount,
+    unresolvedNamespacePrefixCount: countUnresolvedNamespacePrefixes(details.html),
   });
   return details;
+}
+
+async function rewriteAndTrackResources(input: {
+  fragment: string;
+  startPage: number;
+  maxResourceBytes: number;
+  maxChapterBytes: number;
+  kavitaChapterId: number;
+  client: KavitaClient;
+  resourceCache: ResourceFetchCache;
+  rewriteStats: ResourceRewriteStats;
+}): Promise<string> {
+  const rewritten = await rewriteHtmlResources({
+    html: input.fragment,
+    basePath: `page-${input.startPage}.xhtml`,
+    maxResourceBytes: input.maxResourceBytes,
+    maxChapterBytes: input.maxChapterBytes,
+    resourceCache: input.resourceCache,
+    fetchResource: async (path) => input.client.getBookResource(input.kavitaChapterId, path),
+  });
+  mergeResourceRewriteStats(input.rewriteStats, rewritten.stats);
+  return rewritten.html;
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -199,6 +245,12 @@ function diagnosticInteger(value: unknown): number {
   const parsed =
     typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   return Number.isSafeInteger(parsed) ? parsed : -1;
+}
+
+function diagnosticCount(value: unknown): number {
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
 function safePositivePageCount(value: number | undefined): number {
@@ -290,6 +342,31 @@ function htmlByteLength(html: string): number {
   return new TextEncoder().encode(html).byteLength;
 }
 
+function emptyResourceRewriteStats(): ResourceRewriteStats {
+  return {
+    missingResourceCount: 0,
+    missingStylesheetCount: 0,
+    rewrittenHtmlImageCount: 0,
+    rewrittenSvgImageCount: 0,
+    unresolvedNamespacePrefixCount: 0,
+  };
+}
+
+function mergeResourceRewriteStats(
+  target: ResourceRewriteStats,
+  source: ResourceRewriteStats,
+): void {
+  target.missingResourceCount += source.missingResourceCount;
+  target.missingStylesheetCount += source.missingStylesheetCount;
+  target.rewrittenHtmlImageCount += source.rewrittenHtmlImageCount;
+  target.rewrittenSvgImageCount += source.rewrittenSvgImageCount;
+  target.unresolvedNamespacePrefixCount += source.unresolvedNamespacePrefixCount;
+}
+
+function countUnresolvedNamespacePrefixes(html: string): number {
+  return html.match(/\b(?:epub|xlink):[\w-]+/giu)?.length ?? 0;
+}
+
 function logNovelDiagnostic(input: {
   build: string;
   mode: NovelRenderingMode;
@@ -303,6 +380,13 @@ function logNovelDiagnostic(input: {
   fetchedPageCount: number;
   htmlBytes: number;
   visibleTextCharacters: number;
+  missingResourceCount: number;
+  missingStylesheetCount: number;
+  rewrittenHtmlImageCount: number;
+  rewrittenSvgImageCount: number;
+  unresolvedNamespacePrefixCount: number;
+  structuralTocEntriesFiltered: number;
+  parsedWordChapterNumberCount: number;
   debugLogging: boolean;
 }): void {
   if (!input.debugLogging) return;
@@ -322,6 +406,13 @@ function logNovelDiagnostic(input: {
       `fetchedPageCount=${input.fetchedPageCount}`,
       `htmlBytes=${input.htmlBytes}`,
       `visibleTextCharacters=${input.visibleTextCharacters}`,
+      `missingResourceCount=${input.missingResourceCount}`,
+      `missingStylesheetCount=${input.missingStylesheetCount}`,
+      `rewrittenHtmlImageCount=${input.rewrittenHtmlImageCount}`,
+      `rewrittenSvgImageCount=${input.rewrittenSvgImageCount}`,
+      `unresolvedNamespacePrefixCount=${input.unresolvedNamespacePrefixCount}`,
+      `structuralTocEntriesFiltered=${input.structuralTocEntriesFiltered}`,
+      `parsedWordChapterNumberCount=${input.parsedWordChapterNumberCount}`,
     ].join(" "),
   );
 }

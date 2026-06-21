@@ -5,7 +5,7 @@ export interface LogicalChapterInput {
   kavitaSeriesId: number;
   kavitaVolumeId?: number;
   kavitaChapterId: number;
-  volumeNumber: number;
+  volumeNumber?: number;
   totalPages: number;
   toc: KavitaTocItem[];
 }
@@ -18,6 +18,8 @@ interface FlatTocItem {
 
 const KAVITA_SENTINEL_READING_NUMBER = 10000;
 const SENTINEL_TITLE_PATTERN = /^(?:chapter|volume|vol\.?|ch\.?)?\s*-?\d+(?:\.0+)?$/iu;
+const STRUCTURAL_TITLE_PATTERN =
+  /^(?:navigation|cover|contents|table\s+of\s+contents|title\s+page|copyright|colophon|newsletter)$/iu;
 
 export function flattenKavitaToc(toc: KavitaTocItem[], totalPages: number): FlatTocItem[] {
   const flattened: FlatTocItem[] = [];
@@ -53,41 +55,113 @@ export function logicalChaptersFromToc(input: LogicalChapterInput): MutsukiLogic
   const flat = flattenKavitaToc(input.toc, totalPages);
 
   if (flat.length === 0) {
+    return [fallbackPhysicalVolumeChapter(input, finalPage, 0, 0)];
+  }
+
+  const ranged = flat.map((item, index) => {
+    const next = flat[index + 1];
+    return {
+      item,
+      startPage: item.page,
+      endPage: next ? Math.max(item.page, next.page - 1) : finalPage,
+    };
+  });
+  const exposed = ranged.filter(({ item }) => !isStructuralTocTitle(item.title));
+  const structuralTocEntriesFiltered = ranged.length - exposed.length;
+  const parsedWordChapterNumberCount = exposed.filter(({ item }) =>
+    hasParsedWordReadingNumber(item.title),
+  ).length;
+
+  if (exposed.length === 0) {
     return [
-      {
-        kavitaSeriesId: input.kavitaSeriesId,
-        kavitaVolumeId: input.kavitaVolumeId,
-        kavitaChapterId: input.kavitaChapterId,
-        title: `Volume ${input.volumeNumber}`,
-        tocPath: [`Volume ${input.volumeNumber}`],
-        startPage: 0,
-        endPage: finalPage,
-        chapterNumber: 1,
-        volumeNumber: input.volumeNumber,
-        isSpecial: false,
-        isLastInVolume: true,
-      },
+      fallbackPhysicalVolumeChapter(
+        input,
+        finalPage,
+        structuralTocEntriesFiltered,
+        parsedWordChapterNumberCount,
+      ),
     ];
   }
 
-  return flat.map((item, index) => {
-    const next = flat[index + 1];
-    const title = normalizedTocTitle(item.title, index);
+  let narrativeFallbackNumber = 0;
+  return exposed.map(({ item, startPage, endPage }, index) => {
     const parsed = validReadingNumber(item.title);
+    const fallbackNumber = nextFallbackNumber({
+      parsed,
+      title: item.title,
+      narrativeFallbackNumber,
+    });
+    narrativeFallbackNumber = fallbackNumber.narrativeFallbackNumber;
+    const title = normalizedTocTitle(item.title, fallbackNumber.chapterNumber);
     return {
       kavitaSeriesId: input.kavitaSeriesId,
       kavitaVolumeId: input.kavitaVolumeId,
       kavitaChapterId: input.kavitaChapterId,
       title,
       tocPath: item.tocPath,
-      startPage: item.page,
-      endPage: next ? Math.max(item.page, next.page - 1) : finalPage,
-      chapterNumber: parsed ?? index + 1,
+      startPage,
+      endPage,
+      chapterNumber: fallbackNumber.chapterNumber,
       volumeNumber: input.volumeNumber,
       isSpecial: classifySpecialTitle(title),
-      isLastInVolume: index === flat.length - 1,
+      isLastInVolume: index === exposed.length - 1,
+      structuralTocEntriesFiltered,
+      parsedWordChapterNumberCount,
     };
   });
+}
+
+function fallbackPhysicalVolumeChapter(
+  input: LogicalChapterInput,
+  finalPage: number,
+  structuralTocEntriesFiltered: number,
+  parsedWordChapterNumberCount: number,
+): MutsukiLogicalChapter {
+  const title =
+    input.volumeNumber === undefined ? "Book" : `Volume ${Number(input.volumeNumber).toString()}`;
+  return {
+    kavitaSeriesId: input.kavitaSeriesId,
+    kavitaVolumeId: input.kavitaVolumeId,
+    kavitaChapterId: input.kavitaChapterId,
+    title,
+    tocPath: [title],
+    startPage: 0,
+    endPage: finalPage,
+    chapterNumber: 1,
+    volumeNumber: input.volumeNumber,
+    isSpecial: false,
+    isLastInVolume: true,
+    structuralTocEntriesFiltered,
+    parsedWordChapterNumberCount,
+  };
+}
+
+function nextFallbackNumber(input: {
+  parsed: number | undefined;
+  title: string;
+  narrativeFallbackNumber: number;
+}): { chapterNumber: number; narrativeFallbackNumber: number } {
+  if (input.parsed !== undefined) {
+    const parsedInteger = Number.isInteger(input.parsed) ? input.parsed : Math.floor(input.parsed);
+    return {
+      chapterNumber: input.parsed,
+      narrativeFallbackNumber: Math.max(input.narrativeFallbackNumber, parsedInteger),
+    };
+  }
+
+  if (classifySpecialTitle(input.title)) {
+    return {
+      chapterNumber: Math.max(1, input.narrativeFallbackNumber + 1),
+      narrativeFallbackNumber: input.narrativeFallbackNumber,
+    };
+  }
+
+  const narrativeFallbackNumber = input.narrativeFallbackNumber + 1;
+  return { chapterNumber: narrativeFallbackNumber, narrativeFallbackNumber };
+}
+
+function isStructuralTocTitle(title: string): boolean {
+  return STRUCTURAL_TITLE_PATTERN.test(title.trim());
 }
 
 function validReadingNumber(title: string): number | undefined {
@@ -96,10 +170,15 @@ function validReadingNumber(title: string): number | undefined {
   return parsed;
 }
 
-function normalizedTocTitle(title: string, index: number): string {
+function hasParsedWordReadingNumber(title: string): boolean {
+  if (validReadingNumber(title) === undefined) return false;
+  return /\b(?:chapter|volume|vol\.?|ch\.?|part)\s+[a-z]+(?:[-\s]+[a-z]+)?/iu.test(title);
+}
+
+function normalizedTocTitle(title: string, fallbackNumber: number): string {
   const trimmed = title.trim();
   if (SENTINEL_TITLE_PATTERN.test(trimmed) && validReadingNumber(trimmed) === undefined) {
-    return `Chapter ${index + 1}`;
+    return `Chapter ${fallbackNumber}`;
   }
   return title;
 }

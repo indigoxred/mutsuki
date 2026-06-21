@@ -121,6 +121,8 @@ export function novelChapterToPaperback(input: {
       endPage: String(input.logicalChapter.endPage),
       isSpecial: String(input.logicalChapter.isSpecial),
       isLastInVolume: String(input.logicalChapter.isLastInVolume),
+      structuralTocEntriesFiltered: String(input.logicalChapter.structuralTocEntriesFiltered ?? 0),
+      parsedWordChapterNumberCount: String(input.logicalChapter.parsedWordChapterNumberCount ?? 0),
     },
     sortingIndex: input.sortingIndex,
   };

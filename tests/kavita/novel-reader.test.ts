@@ -243,6 +243,69 @@ test("full EPUB details inline authenticated Kavita resources without leaking AP
   assert.match(details.html, /src="data:image\/png;base64,AQID"/u);
 });
 
+test("full EPUB diagnostics include sanitized resource and TOC counters", async () => {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (message?: unknown) => {
+    logs.push(String(message));
+  };
+  try {
+    const chapter = novelChapter({ startPage: 0, endPage: 0 });
+    chapter.additionalInfo = {
+      ...chapter.additionalInfo,
+      structuralTocEntriesFiltered: "2",
+      parsedWordChapterNumberCount: "1",
+    };
+
+    await getNovelChapterDetails({
+      sourceManga: novelSourceManga(),
+      chapter,
+      client: {
+        async getBookInfo() {
+          return { pages: 1 };
+        },
+        async getBookPage() {
+          return [
+            '<link rel="stylesheet" href="https://read.negev.red/api/Book/55/book-resources?file=item%2Fstyle%2Fmissing.css&apiKey=secret-key">',
+            "<p>Diagnostic visible text.</p>",
+            '<img alt="Cover" src="https://read.negev.red/api/Book/55/book-resources?file=images%2Fcover.png&apiKey=secret-key">',
+            '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="kavita-scale-width">',
+            '<image xlink:href="https://read.negev.red/api/Book/55/book-resources?file=images%2Fplate.jpg&apiKey=secret-key"></image>',
+            "</svg>",
+          ].join("");
+        },
+        async getBookResource(_chapterId: number, path: string) {
+          if (path.endsWith("missing.css")) return undefined;
+          return {
+            bytes: new Uint8Array([1, 2, 3]).buffer,
+            mimeType: path.endsWith(".png") ? "image/png" : "image/jpeg",
+          };
+        },
+      } as unknown as KavitaClient,
+      renderingMode: "full-epub",
+      maxResourceBytes: 1_000,
+      maxChapterBytes: 20_000,
+      debugLogging: true,
+      build: "0.1.4+test",
+      incomingContentType: "comic",
+      resolvedContentType: "novel",
+      kavitaFormat: "epub",
+    });
+  } finally {
+    console.log = originalLog;
+  }
+
+  const diagnostic = logs.find((line) => line.startsWith("[MutsukiNovel]")) ?? "";
+  assert.match(diagnostic, /missingResourceCount=1/u);
+  assert.match(diagnostic, /missingStylesheetCount=1/u);
+  assert.match(diagnostic, /rewrittenHtmlImageCount=1/u);
+  assert.match(diagnostic, /rewrittenSvgImageCount=1/u);
+  assert.match(diagnostic, /unresolvedNamespacePrefixCount=0/u);
+  assert.match(diagnostic, /structuralTocEntriesFiltered=2/u);
+  assert.match(diagnostic, /parsedWordChapterNumberCount=1/u);
+  assert.equal(diagnostic.includes("secret-key"), false);
+});
+
 function novelSourceManga(): SourceManga {
   return {
     mangaId: "kavita-series:7",

@@ -19,6 +19,7 @@ import {
   type SourceManga,
 } from "@paperback/types";
 
+import { parseReadingNumber } from "../shared/numbers.js";
 import { MUTSUKI_KAVITA_BUILD } from "./build-info.js";
 import { KavitaClient, type KavitaTransport } from "./client.js";
 import { getKavitaDiscoverItems, getKavitaDiscoverSections } from "./discovery.js";
@@ -102,26 +103,26 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
 
     if (serverSourceManga.mangaInfo.contentType === "novel") {
       const novelSourceManga = correctedNovelSourceManga(sourceManga, serverSourceManga);
-      const nested: Chapter[][] = [];
+      const novelChapters: Chapter[] = [];
       for (const chapter of chapters) {
         const bookInfo = await client.getBookInfo(chapter.id);
         const info =
           typeof bookInfo === "object" && bookInfo !== null
             ? (bookInfo as Record<string, unknown>)
             : {};
-        nested.push(
-          await getNovelChaptersFromBook({
+        novelChapters.push(
+          ...(await getNovelChaptersFromBook({
             sourceManga: novelSourceManga,
             client,
             kavitaSeriesId: seriesId,
             kavitaVolumeId: numberValue(info.volumeId),
             kavitaChapterId: chapter.id,
-            volumeNumber: Number(chapter.volumeNumber ?? info.volumeNumber ?? 1),
+            volumeNumber: resolveNovelVolumeNumber(chapter, info),
             totalPages: numberValue(info.pages) ?? chapter.pages,
-          }),
+          })),
         );
       }
-      return nested.flat();
+      return novelChapters.map((chapter, sortingIndex) => ({ ...chapter, sortingIndex }));
     }
 
     return mapKavitaMangaChapters(sourceManga, chapters, client);
@@ -192,6 +193,32 @@ export const MutsukiKavita = Kavita;
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function resolveNovelVolumeNumber(
+  chapter: { title?: string; volumeNumber?: string },
+  bookInfo: Record<string, unknown>,
+): number | undefined {
+  return (
+    validNovelVolumeNumber(chapter.volumeNumber) ??
+    validNovelVolumeNumber(bookInfo.volumeNumber) ??
+    parseReadingNumber(stringValue(bookInfo.bookTitle))?.value ??
+    parseReadingNumber(chapter.title)?.value ??
+    parseReadingNumber(stringValue(bookInfo.seriesName))?.value
+  );
+}
+
+function validNovelVolumeNumber(value: unknown): number | undefined {
+  const parsed =
+    typeof value === "number" ? value : typeof value === "string" ? Number(value.trim()) : NaN;
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed === 10000 || parsed === -100000) {
+    return undefined;
+  }
+  return parsed;
 }
 
 function correctedNovelSourceManga(

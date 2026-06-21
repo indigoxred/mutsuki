@@ -94,3 +94,108 @@ test("leaves non-Kavita absolute resources unchanged", async () => {
   assert.deepEqual(fetched, []);
   assert.match(rewritten.html, /https:\/\/cdn\.example\.test\/remote\.jpg/u);
 });
+
+test("removes missing stylesheets and CSS imports while caching resource misses", async () => {
+  const fetchCounts = new Map<string, number>();
+  const resourceUrl = (file: string): string =>
+    `//read.example.test/api/book/65572/book-resources?apiKey=secret-key&file=${encodeURIComponent(
+      file,
+    )}`;
+
+  const rewritten = await rewriteHtmlResources({
+    html: [
+      `<link rel="stylesheet" href="${resourceUrl("item/style/style-reset.css")}">`,
+      `<link rel="stylesheet" href="${resourceUrl("item/style/main.css")}">`,
+      "<style>",
+      `@import url("${resourceUrl("item/style/style-reset.css")}");`,
+      `.hero{background:url("${resourceUrl("images/bg.jpg")}")}`,
+      "</style>",
+      "<p>Visible Hitagi text survives.</p>",
+      `<img alt="Cover" src="${resourceUrl("images/cover.jpg")}">`,
+    ].join(""),
+    basePath: "page-6.xhtml",
+    maxResourceBytes: 20_000,
+    maxChapterBytes: 100_000,
+    fetchResource: async (path) => {
+      fetchCounts.set(path, (fetchCounts.get(path) ?? 0) + 1);
+      if (path === "item/style/main.css") {
+        return {
+          bytes: new TextEncoder().encode(
+            [
+              `@import url("${resourceUrl("item/style/style-standard.css")}");`,
+              `@import url("${resourceUrl("item/style/style-reset.css")}");`,
+              `.chapter{background:url("${resourceUrl("images/bg.jpg")}")}`,
+            ].join(""),
+          ).buffer,
+          mimeType: "text/css",
+        };
+      }
+      if (path.startsWith("item/style/")) return undefined;
+      return { bytes: new Uint8Array([1, 2, 3]).buffer, mimeType: "image/jpeg" };
+    },
+  });
+
+  assert.equal(fetchCounts.get("item/style/style-reset.css"), 1);
+  assert.equal(fetchCounts.get("item/style/style-standard.css"), 1);
+  assert.equal(fetchCounts.get("images/bg.jpg"), 1);
+  assert.equal(rewritten.html.includes("Stylesheet unavailable"), false);
+  assert.equal(rewritten.html.includes("@import"), false);
+  assert.equal(rewritten.html.includes("style-reset.css"), false);
+  assert.equal(rewritten.html.includes("style-standard.css"), false);
+  assert.match(rewritten.html, /Visible Hitagi text survives/u);
+  assert.match(rewritten.html, /data:image\/jpeg;base64,AQID/u);
+  assert.match(
+    rewritten.warnings.join("\n"),
+    /Missing EPUB resource: item\/style\/style-reset\.css/u,
+  );
+});
+
+test("converts protected SVG images and img srcsets to safe data URLs", async () => {
+  const fetched: string[] = [];
+  const resourceUrl = (file: string): string =>
+    `//read.example.test/api/book/68789/book-resources?apiKey=secret-key&file=${encodeURIComponent(
+      file,
+    )}`;
+
+  const rewritten = await rewriteHtmlResources({
+    html: [
+      '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" class="kavita-scale-width" width="1200" height="1800">',
+      `<image width="1200" height="1800" xlink:href="${resourceUrl("images/page-a.jpg")}"></image>`,
+      "</svg>",
+      '<svg xmlns="http://www.w3.org/2000/svg" class="kavita-scale-width">',
+      `<image href="${resourceUrl("images/page-b.jpg")}"></image>`,
+      "</svg>",
+      `<img alt="Set" src="${resourceUrl("images/fallback.jpg")}" srcset="${resourceUrl(
+        "images/small.jpg",
+      )} 1x, ${resourceUrl("images/large.jpg")} 2x">`,
+    ].join(""),
+    basePath: "page-0.xhtml",
+    maxResourceBytes: 20_000,
+    maxChapterBytes: 100_000,
+    fetchResource: async (path) => {
+      fetched.push(path);
+      return { bytes: new Uint8Array([1, 2, 3]).buffer, mimeType: "image/jpeg" };
+    },
+  });
+
+  assert.deepEqual(fetched, [
+    "images/page-a.jpg",
+    "images/page-b.jpg",
+    "images/fallback.jpg",
+    "images/small.jpg",
+    "images/large.jpg",
+  ]);
+  assert.equal(rewritten.html.includes("<svg"), false);
+  assert.equal(rewritten.html.includes("xlink:"), false);
+  assert.equal(rewritten.html.includes("/book-resources?"), false);
+  assert.equal(rewritten.html.includes("apiKey="), false);
+  assert.equal(rewritten.html.includes("secret-key"), false);
+  assert.match(
+    rewritten.html,
+    /<img src="data:image\/jpeg;base64,AQID" alt="" class="kavita-scale-width"[^>]*\/>/u,
+  );
+  assert.match(
+    rewritten.html,
+    /srcset="data:image\/jpeg;base64,AQID 1x, data:image\/jpeg;base64,AQID 2x"/u,
+  );
+});

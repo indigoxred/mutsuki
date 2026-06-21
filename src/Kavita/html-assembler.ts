@@ -12,7 +12,7 @@ export async function assembleHtmlChapter(input: AssembleHtmlChapterInput): Prom
   const rewrittenPages: string[] = [];
   for (const page of input.pages) {
     rewrittenPages.push(
-      normalizeXhtml(await input.rewriteResources(sanitizeExecutableContent(rewriteAnchors(page)))),
+      normalizeXhtml(sanitizeExecutableContent(await input.rewriteResources(rewriteAnchors(page)))),
     );
   }
 
@@ -36,6 +36,7 @@ export async function assembleHtmlChapter(input: AssembleHtmlChapterInput): Prom
 function sanitizeExecutableContent(html: string): string {
   return html
     .replace(/\s+epub:[\w-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/giu, "")
+    .replace(/\s+xlink:[\w-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/giu, "")
     .replace(/\s+xmlns:[\w-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/giu, "")
     .replace(/<script\b[\s\S]*?<\/script>/giu, "")
     .replace(

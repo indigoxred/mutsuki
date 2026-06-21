@@ -21,7 +21,22 @@ test("parses chapter numbers while preserving decimal awareness", () => {
     isDecimal: true,
   });
   assert.deepEqual(parseReadingNumber("Volume 3"), { value: 3, isDecimal: false });
+  assert.deepEqual(parseReadingNumber("Part 3"), { value: 3, isDecimal: false });
+  assert.deepEqual(parseReadingNumber("CHAPTER ONE HITAGI CRAB"), {
+    value: 1,
+    isDecimal: false,
+  });
+  assert.deepEqual(parseReadingNumber("CHAPTER FIVE TSUBASA CAT"), {
+    value: 5,
+    isDecimal: false,
+  });
+  assert.deepEqual(parseReadingNumber("Chapter Twenty-One"), {
+    value: 21,
+    isDecimal: false,
+  });
+  assert.deepEqual(parseReadingNumber("Chapter V"), { value: 5, isDecimal: false });
   assert.equal(parseReadingNumber("Afterword"), undefined);
+  assert.equal(parseReadingNumber("One fine day"), undefined);
 });
 
 test("classifies common novel specials conservatively", () => {

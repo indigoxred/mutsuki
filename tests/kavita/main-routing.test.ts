@@ -61,6 +61,107 @@ test("server EPUB metadata routes chapters as novels when incoming content type 
   assert.equal(chapters[0]?.sourceManga.mangaInfo.contentType, "novel");
 });
 
+test("EPUB chapters derive sane volumes and global sorting across physical books", async () => {
+  installApplicationStub({
+    scheduleRequest: async (request) => {
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/api/Series/7") {
+        return jsonResponse({
+          id: 7,
+          name: "BAKEMONOGATARI",
+          format: 3,
+          libraryName: "Light Novels",
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/api/Series/volumes") {
+        return jsonResponse([
+          {
+            number: "-100000",
+            chapters: [
+              { id: 65572, title: "BAKEMONOGATARI Part 1", pages: 31 },
+              { id: 65574, title: "BAKEMONOGATARI Part 3", pages: 19 },
+            ],
+          },
+        ]);
+      }
+      if (request.method === "GET" && url.pathname === "/api/Book/65572/book-info") {
+        return jsonResponse({
+          volumeId: 48557,
+          volumeNumber: "-100000",
+          bookTitle: "BAKEMONOGATARI Part 1",
+          seriesName: "BAKEMONOGATARI",
+          pages: 31,
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/api/Book/65572/chapters") {
+        return jsonResponse([
+          { title: "Navigation", page: 0 },
+          { title: "Cover", page: 0 },
+          { title: "Contents", page: 5 },
+          { title: "CHAPTER ONE HITAGI CRAB", page: 6 },
+          { title: "CHAPTER TWO MAYOI SNAIL", page: 17 },
+        ]);
+      }
+      if (request.method === "GET" && url.pathname === "/api/Book/65574/book-info") {
+        return jsonResponse({
+          volumeId: 48559,
+          volumeNumber: "-100000",
+          bookTitle: "BAKEMONOGATARI Part 3",
+          seriesName: "BAKEMONOGATARI",
+          pages: 19,
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/api/Book/65574/chapters") {
+        return jsonResponse([
+          { title: "Navigation", page: 0 },
+          { title: "Contents", page: 5 },
+          { title: "CHAPTER FIVE TSUBASA CAT", page: 6 },
+        ]);
+      }
+      throw new Error(`Unexpected request ${request.method} ${url.pathname}`);
+    },
+  });
+
+  const chapters = await new MutsukiKavitaExtension().getChapters(series({ contentType: "comic" }));
+
+  assert.deepEqual(
+    chapters.map((chapter) => ({
+      chapNum: chapter.chapNum,
+      title: chapter.title,
+      volume: chapter.volume,
+      sortingIndex: chapter.sortingIndex,
+      startPage: chapter.additionalInfo?.startPage,
+      endPage: chapter.additionalInfo?.endPage,
+    })),
+    [
+      {
+        chapNum: 1,
+        title: "CHAPTER ONE HITAGI CRAB",
+        volume: 1,
+        sortingIndex: 0,
+        startPage: "6",
+        endPage: "16",
+      },
+      {
+        chapNum: 2,
+        title: "CHAPTER TWO MAYOI SNAIL",
+        volume: 1,
+        sortingIndex: 1,
+        startPage: "17",
+        endPage: "30",
+      },
+      {
+        chapNum: 5,
+        title: "CHAPTER FIVE TSUBASA CAT",
+        volume: 3,
+        sortingIndex: 2,
+        startPage: "6",
+        endPage: "18",
+      },
+    ],
+  );
+});
+
 test("manga chapters still route to image-page details", async () => {
   installApplicationStub({
     scheduleRequest: async (request) => {

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { KavitaClient, type KavitaRequest } from "../../src/Kavita/client.js";
+import { KavitaClient, KavitaRequestError, type KavitaRequest } from "../../src/Kavita/client.js";
 
 test("constructs current Kavita book and reader endpoints with sanitized auth", async () => {
   const requests: { url: string; method: string; headers?: Record<string, string> }[] = [];
@@ -90,4 +90,55 @@ test("uses current Kavita REST routes for browse and search", async () => {
   assert.equal(requests[1]?.body, undefined);
   assert.equal(requests[2]?.body, undefined);
   assert.equal(requests[3]?.body, JSON.stringify({ statements: [], combination: 0 }));
+});
+
+test("treats missing book resources as unavailable without weakening other endpoints", async () => {
+  const requests: KavitaRequest[] = [];
+  const client = new KavitaClient({
+    baseUrl: "https://kavita.example.test",
+    apiKey: "secret-key",
+    transport: async (request) => {
+      requests.push(request);
+      if (request.url.includes("/book-resources")) {
+        return {
+          status: 400,
+          headers: { "content-type": "text/plain" },
+          body: "File was not found in book",
+        };
+      }
+      return {
+        status: 400,
+        headers: { "content-type": "text/plain" },
+        body: "File was not found in book",
+      };
+    },
+  });
+
+  assert.equal(await client.getBookResource(65572, "item/style/style-reset.css"), undefined);
+  await assert.rejects(client.getBookPage(65572, 0), KavitaRequestError);
+  assert.equal(requests[0]?.url.includes("apiKey="), false);
+});
+
+test("keeps authentication, retryable, and server resource failures fatal", async () => {
+  for (const status of [401, 403, 429, 500]) {
+    const client = new KavitaClient({
+      baseUrl: "https://kavita.example.test",
+      apiKey: "secret-key",
+      transport: async () => ({
+        status,
+        headers: { "content-type": "text/plain" },
+        body: "Nope",
+      }),
+    });
+
+    await assert.rejects(
+      client.getBookResource(55, "images/cover.jpg"),
+      (error: unknown) =>
+        error instanceof KavitaRequestError &&
+        error.status === status &&
+        error.path === "/Book/55/book-resources" &&
+        !error.message.includes("secret-key") &&
+        !error.message.includes("apiKey"),
+    );
+  }
 });

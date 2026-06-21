@@ -13,9 +13,11 @@ export interface MutsukiLogicalChapter {
   startPage: number;
   endPage: number;
   chapterNumber: number;
-  volumeNumber: number;
+  volumeNumber?: number;
   isSpecial: boolean;
   isLastInVolume: boolean;
+  structuralTocEntriesFiltered?: number;
+  parsedWordChapterNumberCount?: number;
 }
 
 export interface KavitaBookInfo {

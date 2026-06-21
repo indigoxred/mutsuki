@@ -1,4 +1,5 @@
 import { classifyHttpStatus } from "../shared/errors.js";
+import type { HttpStatusClass } from "../shared/errors.js";
 import { assertSameOrigin, normalizeKavitaBaseUrl, toKavitaApiUrl } from "../shared/url.js";
 import type { KavitaTocItem, ResourceFetchResult } from "./models.js";
 
@@ -21,6 +22,30 @@ export interface KavitaClientOptions {
   baseUrl: string;
   apiKey: string;
   transport: KavitaTransport;
+}
+
+export class KavitaRequestError extends Error {
+  readonly status: number;
+  readonly path: string;
+  readonly retryClassification: HttpStatusClass;
+  readonly responseMessage: string;
+
+  constructor(input: {
+    status: number;
+    path: string;
+    retryClassification: HttpStatusClass;
+    responseMessage: string;
+  }) {
+    const detail = input.responseMessage ? ` ${input.responseMessage}` : "";
+    super(
+      `Kavita request failed with ${input.retryClassification} status ${input.status} at ${input.path}.${detail}`,
+    );
+    this.name = "KavitaRequestError";
+    this.status = input.status;
+    this.path = input.path;
+    this.retryClassification = input.retryClassification;
+    this.responseMessage = input.responseMessage;
+  }
 }
 
 interface SeriesFilterBody {
@@ -102,8 +127,15 @@ export class KavitaClient {
     return String(await this.getJson(`/Book/${chapterId}/book-page`, { page }));
   }
 
-  async getBookResource(chapterId: number, file: string): Promise<ResourceFetchResult> {
-    const response = await this.request("GET", `/Book/${chapterId}/book-resources`, { file });
+  async getBookResource(chapterId: number, file: string): Promise<ResourceFetchResult | undefined> {
+    const path = `/Book/${chapterId}/book-resources`;
+    let response: KavitaResponse;
+    try {
+      response = await this.request("GET", path, { file });
+    } catch (error) {
+      if (isUnavailableOptionalBookResource(error)) return undefined;
+      throw error;
+    }
     const body =
       typeof response.body === "string"
         ? new TextEncoder().encode(response.body).buffer
@@ -183,11 +215,22 @@ export class KavitaClient {
 
     const statusClass = classifyHttpStatus(response.status);
     if (statusClass !== "ok") {
-      throw new Error(`Kavita request failed with ${statusClass} status ${response.status}.`);
+      throw new KavitaRequestError({
+        status: response.status,
+        path,
+        retryClassification: statusClass,
+        responseMessage: sanitizedResponseMessage(response.body),
+      });
     }
 
     return response;
   }
+}
+
+function isUnavailableOptionalBookResource(error: unknown): boolean {
+  if (!(error instanceof KavitaRequestError)) return false;
+  if (error.status === 404) return true;
+  return error.status === 400 && /file was not found in book/iu.test(error.responseMessage);
 }
 
 function emptySeriesFilter(): SeriesFilterBody {
@@ -214,4 +257,23 @@ function guessMimeType(path: string): string {
   if (lower.endsWith(".css")) return "text/css";
   if (lower.endsWith(".svg")) return "image/svg+xml";
   return "application/octet-stream";
+}
+
+function sanitizedResponseMessage(body: string | ArrayBuffer): string {
+  const raw = typeof body === "string" ? body : safeDecodeBody(body);
+  return raw
+    .replace(/apiKey=[^&\s"')<>]+/giu, "apiKey=redacted")
+    .replace(/x-api-key[:=]\s*[^&\s"')<>]+/giu, "x-api-key=redacted")
+    .replace(/https?:\/\/[^\s"')<>]+/giu, "redacted-url")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 180);
+}
+
+function safeDecodeBody(body: ArrayBuffer): string {
+  try {
+    return new TextDecoder().decode(body);
+  } catch {
+    return "";
+  }
 }

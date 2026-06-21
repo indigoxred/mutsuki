@@ -1,89 +1,154 @@
 import type { ResourceFetchResult } from "./models.js";
 
+export type ResourceFetchCache = Map<string, Promise<ResourceFetchResult | undefined>>;
+
 export interface ResourceRewriteInput {
   html: string;
   basePath: string;
   maxResourceBytes: number;
   maxChapterBytes: number;
   fetchResource: (path: string) => Promise<ResourceFetchResult | undefined>;
+  resourceCache?: ResourceFetchCache;
+}
+
+export interface ResourceRewriteStats {
+  missingResourceCount: number;
+  missingStylesheetCount: number;
+  rewrittenHtmlImageCount: number;
+  rewrittenSvgImageCount: number;
+  unresolvedNamespacePrefixCount: number;
 }
 
 export interface ResourceRewriteResult {
   html: string;
   warnings: string[];
+  stats: ResourceRewriteStats;
 }
+
+interface RewriteContext {
+  input: ResourceRewriteInput;
+  warnings: string[];
+  stats: ResourceRewriteStats;
+  resourceCache: ResourceFetchCache;
+  missingStylesheetPaths: Set<string>;
+}
+
+const MAX_CSS_IMPORT_DEPTH = 8;
 
 export async function rewriteHtmlResources(
   input: ResourceRewriteInput,
 ): Promise<ResourceRewriteResult> {
-  const warnings: string[] = [];
+  const context: RewriteContext = {
+    input,
+    warnings: [],
+    stats: emptyStats(),
+    resourceCache: input.resourceCache ?? new Map(),
+    missingStylesheetPaths: new Set(),
+  };
   let html = input.html;
 
-  html = await rewriteStylesheets(html, input, warnings);
-  html = await rewriteInlineStyleBlocks(html, input, warnings);
-  html = await rewriteImageAttributes(html, input, warnings);
+  html = await rewriteStylesheets(html, context);
+  html = await rewriteInlineStyleBlocks(html, context);
+  html = await rewriteSvgImageWrappers(html, context);
+  html = await rewriteHtmlImageElements(html, context);
 
   if (utf8ByteLength(html) > input.maxChapterBytes) {
-    warnings.push("Generated chapter HTML exceeded the configured size limit.");
+    context.warnings.push("Generated chapter HTML exceeded the configured size limit.");
     html = `<p data-mutsuki-missing-resource="chapter-size-limit">Chapter exceeded configured HTML size limit.</p>`;
   }
 
-  return { html, warnings };
+  context.stats.unresolvedNamespacePrefixCount = countUnresolvedNamespacePrefixes(html);
+  return { html, warnings: context.warnings, stats: context.stats };
 }
 
-async function rewriteStylesheets(
-  html: string,
-  input: ResourceRewriteInput,
-  warnings: string[],
-): Promise<string> {
-  const stylesheetPattern = /<link\b([^>]*?)href=(["'])([^"']+)\2([^>]*?)>/giu;
-  return replaceAsync(
-    html,
-    stylesheetPattern,
-    async (_match, before: string, _quote: string, href: string, after: string) => {
-      if (!/\brel=(["'])stylesheet\1/iu.test(`${before} ${after}`)) return _match;
-      const path = resolveFetchableResourcePath(input.basePath, href);
-      if (path === undefined) return _match;
-      const resource = await fetchBounded(path, input, warnings);
-      if (!resource) return missingResourcePlaceholder(path, "Stylesheet unavailable");
-      const css = new TextDecoder().decode(resource.bytes);
-      const inlined = await rewriteCssUrls(css, path, input, warnings);
-      return `<style>${inlined}</style>`;
-    },
-  );
+function emptyStats(): ResourceRewriteStats {
+  return {
+    missingResourceCount: 0,
+    missingStylesheetCount: 0,
+    rewrittenHtmlImageCount: 0,
+    rewrittenSvgImageCount: 0,
+    unresolvedNamespacePrefixCount: 0,
+  };
 }
 
-async function rewriteInlineStyleBlocks(
-  html: string,
-  input: ResourceRewriteInput,
-  warnings: string[],
-): Promise<string> {
+async function rewriteStylesheets(html: string, context: RewriteContext): Promise<string> {
+  const stylesheetPattern = /<link\b([^>]*)>/giu;
+  return replaceAsync(html, stylesheetPattern, async (match: string, attributes: string) => {
+    const href = extractAttribute(attributes, "href");
+    if (!href || !/\bstylesheet\b/iu.test(extractAttribute(attributes, "rel") ?? "")) return match;
+
+    const path = resolveFetchableResourcePath(context.input.basePath, href);
+    if (path === undefined) return match;
+
+    const resource = await fetchBounded(path, context);
+    if (!resource) {
+      recordMissingStylesheet(path, context);
+      return "";
+    }
+
+    const css = new TextDecoder().decode(resource.bytes);
+    const inlined = await rewriteCss(css, path, context, 0, new Set([path]));
+    return `<style>${inlined}</style>`;
+  });
+}
+
+async function rewriteInlineStyleBlocks(html: string, context: RewriteContext): Promise<string> {
   const stylePattern = /<style\b([^>]*)>([\s\S]*?)<\/style>/giu;
   return replaceAsync(
     html,
     stylePattern,
-    async (_match, attributes: string, css: string) =>
-      `<style${attributes}>${await rewriteCssUrls(css, input.basePath, input, warnings)}</style>`,
+    async (_match: string, attributes: string, css: string) =>
+      `<style${attributes}>${await rewriteCss(css, context.input.basePath, context, 0, new Set())}</style>`,
   );
 }
 
-async function rewriteImageAttributes(
-  html: string,
-  input: ResourceRewriteInput,
-  warnings: string[],
+async function rewriteCss(
+  css: string,
+  stylesheetPath: string,
+  context: RewriteContext,
+  depth: number,
+  importStack: Set<string>,
 ): Promise<string> {
-  const imagePattern = /<img\b([^>]*?)\bsrc=(["'])([^"']+)\2([^>]*)>/giu;
+  const withoutImports = await rewriteCssImports(css, stylesheetPath, context, depth, importStack);
+  return rewriteCssUrls(withoutImports, stylesheetPath, context);
+}
+
+async function rewriteCssImports(
+  css: string,
+  stylesheetPath: string,
+  context: RewriteContext,
+  depth: number,
+  importStack: Set<string>,
+): Promise<string> {
+  const importPattern = /@import\s+(?:url\(\s*)?(?:(["'])([^"']+)\1|([^"')\s;]+))\s*\)?[^;]*;/giu;
   return replaceAsync(
-    html,
-    imagePattern,
-    async (_match, before: string, _quote: string, src: string, after: string) => {
-      const path = resolveFetchableResourcePath(input.basePath, src);
-      if (path === undefined) return _match;
-      const alt = extractAttribute(`${before} ${after}`, "alt") ?? "Image unavailable";
-      const resource = await fetchBounded(path, input, warnings);
-      if (!resource) return missingResourcePlaceholder(path, alt);
-      const dataUrl = toDataUrl(resource);
-      return `<img${before}src="${dataUrl}"${after}>`;
+    css,
+    importPattern,
+    async (match: string, _quote: string, quotedHref: string, unquotedHref: string) => {
+      const href = (quotedHref || unquotedHref || "").trim();
+      const path = resolveFetchableResourcePath(stylesheetPath, href);
+      if (path === undefined) return match;
+
+      if (depth >= MAX_CSS_IMPORT_DEPTH || importStack.has(path)) {
+        context.warnings.push(`Skipped cyclic or deeply nested EPUB CSS import: ${path}`);
+        return "";
+      }
+
+      const resource = await fetchBounded(path, context);
+      if (!resource) {
+        recordMissingStylesheet(path, context);
+        return "";
+      }
+
+      const nextStack = new Set(importStack);
+      nextStack.add(path);
+      return rewriteCss(
+        new TextDecoder().decode(resource.bytes),
+        path,
+        context,
+        depth + 1,
+        nextStack,
+      );
     },
   );
 }
@@ -91,39 +156,184 @@ async function rewriteImageAttributes(
 async function rewriteCssUrls(
   css: string,
   stylesheetPath: string,
-  input: ResourceRewriteInput,
-  warnings: string[],
+  context: RewriteContext,
 ): Promise<string> {
   const urlPattern = /url\(\s*(["']?)(?!data:|#)([^"')]+)\1\s*\)/giu;
-  return replaceAsync(css, urlPattern, async (_match, _quote: string, href: string) => {
+  return replaceAsync(css, urlPattern, async (match: string, _quote: string, href: string) => {
     const path = resolveFetchableResourcePath(stylesheetPath, href.trim());
-    if (path === undefined) return _match;
-    const resource = await fetchBounded(path, input, warnings);
+    if (path === undefined) return match;
+    const resource = await fetchBounded(path, context);
     return resource ? `url("${toDataUrl(resource)}")` : "none";
   });
 }
 
+async function rewriteSvgImageWrappers(html: string, context: RewriteContext): Promise<string> {
+  const svgPattern = /<svg\b([^>]*)>([\s\S]*?)<\/svg>/giu;
+  return replaceAsync(
+    html,
+    svgPattern,
+    async (match: string, svgAttributes: string, body: string) => {
+      const imageMatch = /<image\b([^>]*)>/iu.exec(body);
+      if (!imageMatch?.[1]) return match.includes("xlink:") ? "" : match;
+
+      const imageAttributes = imageMatch[1];
+      const href =
+        extractAttribute(imageAttributes, "xlink:href") ??
+        extractAttribute(imageAttributes, "href");
+      if (!href) return match.includes("xlink:") ? "" : match;
+
+      const path = resolveFetchableResourcePath(context.input.basePath, href);
+      if (path === undefined) {
+        return missingResourcePlaceholder(
+          "svg-image",
+          imageAltText(svgAttributes, imageAttributes),
+        );
+      }
+
+      const resource = await fetchBounded(path, context);
+      if (!resource) {
+        return missingResourcePlaceholder(path, imageAltText(svgAttributes, imageAttributes));
+      }
+
+      context.stats.rewrittenSvgImageCount += 1;
+      return svgImageToXhtmlImage(resource, svgAttributes, imageAttributes);
+    },
+  );
+}
+
+async function rewriteHtmlImageElements(html: string, context: RewriteContext): Promise<string> {
+  const imagePattern = /<img\b([^>]*)>/giu;
+  return replaceAsync(html, imagePattern, async (match: string, originalAttributes: string) => {
+    let attributes = originalAttributes;
+    let rewritten = false;
+
+    const src = extractAttribute(attributes, "src");
+    if (src) {
+      const path = resolveFetchableResourcePath(context.input.basePath, src);
+      if (path !== undefined) {
+        const resource = await fetchBounded(path, context);
+        if (!resource) {
+          return missingResourcePlaceholder(
+            path,
+            extractAttribute(attributes, "alt") ?? "Image unavailable",
+          );
+        }
+        attributes = setAttribute(attributes, "src", toDataUrl(resource));
+        rewritten = true;
+      }
+    }
+
+    const srcset = extractAttribute(attributes, "srcset");
+    if (srcset) {
+      const rewrittenSrcset = await rewriteSrcset(srcset, context);
+      if (rewrittenSrcset.rewritten) {
+        rewritten = true;
+        attributes =
+          rewrittenSrcset.value === undefined
+            ? removeAttribute(attributes, "srcset")
+            : setAttribute(attributes, "srcset", rewrittenSrcset.value);
+      }
+    }
+
+    if (rewritten) context.stats.rewrittenHtmlImageCount += 1;
+    return rewritten ? `<img${attributes}>` : match;
+  });
+}
+
+async function rewriteSrcset(
+  srcset: string,
+  context: RewriteContext,
+): Promise<{ value: string | undefined; rewritten: boolean }> {
+  const candidates: string[] = [];
+  let rewritten = false;
+
+  for (const rawCandidate of srcset.split(",")) {
+    const candidate = rawCandidate.trim();
+    if (!candidate) continue;
+    const match = /^(\S+)(.*)$/u.exec(candidate);
+    const href = match?.[1];
+    if (!href) continue;
+
+    const path = resolveFetchableResourcePath(context.input.basePath, href);
+    if (path === undefined) {
+      candidates.push(candidate);
+      continue;
+    }
+
+    rewritten = true;
+    const resource = await fetchBounded(path, context);
+    if (resource) candidates.push(`${toDataUrl(resource)}${match[2] ?? ""}`);
+  }
+
+  return { value: candidates.length > 0 ? candidates.join(", ") : undefined, rewritten };
+}
+
 async function fetchBounded(
   path: string,
-  input: ResourceRewriteInput,
-  warnings: string[],
+  context: RewriteContext,
 ): Promise<ResourceFetchResult | undefined> {
-  const resource = await input.fetchResource(path);
-  if (!resource) {
-    warnings.push(`Missing EPUB resource: ${path}`);
-    return undefined;
-  }
+  let promise = context.resourceCache.get(path);
+  if (!promise) {
+    promise = context.input.fetchResource(path).then((resource) => {
+      if (!resource) {
+        context.stats.missingResourceCount += 1;
+        context.warnings.push(`Missing EPUB resource: ${path}`);
+        return undefined;
+      }
 
-  if (resource.bytes.byteLength > input.maxResourceBytes) {
-    warnings.push(`EPUB resource exceeded size limit: ${path}`);
-    return undefined;
-  }
+      if (resource.bytes.byteLength > context.input.maxResourceBytes) {
+        context.stats.missingResourceCount += 1;
+        context.warnings.push(`EPUB resource exceeded size limit: ${path}`);
+        return undefined;
+      }
 
-  return resource;
+      return resource;
+    });
+    context.resourceCache.set(path, promise);
+  }
+  return promise;
+}
+
+function recordMissingStylesheet(path: string, context: RewriteContext): void {
+  if (context.missingStylesheetPaths.has(path)) return;
+  context.missingStylesheetPaths.add(path);
+  context.stats.missingStylesheetCount += 1;
 }
 
 function missingResourcePlaceholder(path: string, label: string): string {
-  return `<span data-mutsuki-missing-resource="${escapeHtml(path)}">${escapeHtml(label)}</span>`;
+  return `<span data-mutsuki-missing-resource="${escapeAttribute(path)}">${escapeHtml(label)}</span>`;
+}
+
+function svgImageToXhtmlImage(
+  resource: ResourceFetchResult,
+  svgAttributes: string,
+  imageAttributes: string,
+): string {
+  const className =
+    extractAttribute(imageAttributes, "class") ??
+    extractAttribute(svgAttributes, "class") ??
+    "kavita-scale-width";
+  const width =
+    extractAttribute(imageAttributes, "width") ?? extractAttribute(svgAttributes, "width");
+  const height =
+    extractAttribute(imageAttributes, "height") ?? extractAttribute(svgAttributes, "height");
+  return [
+    `<img src="${toDataUrl(resource)}"`,
+    ` alt="${escapeAttribute(imageAltText(svgAttributes, imageAttributes))}"`,
+    className ? ` class="${escapeAttribute(className)}"` : "",
+    width ? ` width="${escapeAttribute(width)}"` : "",
+    height ? ` height="${escapeAttribute(height)}"` : "",
+    " />",
+  ].join("");
+}
+
+function imageAltText(svgAttributes: string, imageAttributes: string): string {
+  return (
+    extractAttribute(imageAttributes, "alt") ??
+    extractAttribute(svgAttributes, "aria-label") ??
+    extractAttribute(svgAttributes, "title") ??
+    ""
+  );
 }
 
 function resolveFetchableResourcePath(basePath: string, href: string): string | undefined {
@@ -197,8 +407,26 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 }
 
 function extractAttribute(html: string, name: string): string | undefined {
-  const match = new RegExp(`\\b${name}=(["'])(.*?)\\1`, "iu").exec(html);
+  const match = new RegExp(`(?:^|\\s)${escapeRegex(name)}\\s*=\\s*(["'])(.*?)\\1`, "iu").exec(html);
   return match?.[2];
+}
+
+function setAttribute(attributes: string, name: string, value: string): string {
+  const pattern = new RegExp(`(^|\\s)${escapeRegex(name)}\\s*=\\s*(["'])(.*?)\\2`, "iu");
+  if (pattern.test(attributes)) {
+    return attributes.replace(
+      pattern,
+      (_match, prefix: string) => `${prefix}${name}="${escapeAttribute(value)}"`,
+    );
+  }
+  return `${attributes} ${name}="${escapeAttribute(value)}"`;
+}
+
+function removeAttribute(attributes: string, name: string): string {
+  return attributes.replace(
+    new RegExp(`(^|\\s)${escapeRegex(name)}\\s*=\\s*(["'])(.*?)\\2`, "giu"),
+    "$1",
+  );
 }
 
 function utf8ByteLength(value: string): number {
@@ -213,8 +441,20 @@ function escapeHtml(value: string): string {
     .replace(/"/gu, "&quot;");
 }
 
+function escapeAttribute(value: string): string {
+  return escapeHtml(value);
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
 function decodeQueryComponent(value: string): string {
   return decodeURIComponent(value.replace(/\+/gu, " "));
+}
+
+function countUnresolvedNamespacePrefixes(html: string): number {
+  return html.match(/\b(?:epub|xlink):[\w-]+/giu)?.length ?? 0;
 }
 
 async function replaceAsync(

@@ -64,11 +64,73 @@ test("uses Kavita zero-based EPUB page numbers", () => {
       startPage: chapter.startPage,
       endPage: chapter.endPage,
     })),
+    [{ title: "Chapter 1", startPage: 1, endPage: 2 }],
+  );
+});
+
+test("filters structural BAKEMONOGATARI Part 1 TOC entries without shifting chapter numbers", () => {
+  const chapters = logicalChaptersFromToc({
+    kavitaSeriesId: 14324,
+    kavitaVolumeId: 48557,
+    kavitaChapterId: 65572,
+    volumeNumber: 1,
+    totalPages: 31,
+    toc: [
+      { title: "Navigation", page: 0 },
+      { title: "Cover", page: 0 },
+      { title: "Contents", page: 5 },
+      { title: "CHAPTER ONE HITAGI CRAB", page: 6 },
+      { title: "CHAPTER TWO MAYOI SNAIL", page: 17 },
+    ],
+  });
+
+  assert.deepEqual(
+    chapters.map((chapter) => ({
+      chapNum: chapter.chapterNumber,
+      title: chapter.title,
+      startPage: chapter.startPage,
+      endPage: chapter.endPage,
+      isSpecial: chapter.isSpecial,
+    })),
     [
-      { title: "Cover", startPage: 0, endPage: 0 },
-      { title: "Chapter 1", startPage: 1, endPage: 2 },
+      {
+        chapNum: 1,
+        title: "CHAPTER ONE HITAGI CRAB",
+        startPage: 6,
+        endPage: 16,
+        isSpecial: false,
+      },
+      {
+        chapNum: 2,
+        title: "CHAPTER TWO MAYOI SNAIL",
+        startPage: 17,
+        endPage: 30,
+        isSpecial: false,
+      },
     ],
   );
+});
+
+test("parses BAKEMONOGATARI Part 3 word chapter numbers without using fallback order", () => {
+  const chapters = logicalChaptersFromToc({
+    kavitaSeriesId: 14324,
+    kavitaVolumeId: 48559,
+    kavitaChapterId: 65574,
+    volumeNumber: 3,
+    totalPages: 19,
+    toc: [
+      { title: "Navigation", page: 0 },
+      { title: "Contents", page: 5 },
+      { title: "CHAPTER FIVE TSUBASA CAT", page: 6 },
+    ],
+  });
+
+  assert.equal(chapters.length, 1);
+  assert.equal(chapters[0]?.chapterNumber, 5);
+  assert.equal(chapters[0]?.title, "CHAPTER FIVE TSUBASA CAT");
+  assert.equal(chapters[0]?.startPage, 6);
+  assert.equal(chapters[0]?.endPage, 18);
+  assert.equal(chapters[0]?.volumeNumber, 3);
 });
 
 test("keeps a single Kavita zero page when every TOC entry points at page zero", () => {
