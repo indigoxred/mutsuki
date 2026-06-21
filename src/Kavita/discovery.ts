@@ -55,14 +55,30 @@ export async function getKavitaDiscoverItems(
   const records = asArray(payload);
   const items = records.map((item) => {
     const seriesId = numberField(item, "seriesId", "id") ?? 0;
-    return {
-      type: sectionId === "recently-updated" ? "chapterUpdatesCarouselItem" : "simpleCarouselItem",
+    const baseItem = {
       mangaId: `kavita-series:${seriesId}`,
-      chapterId: `kavita-chapter:${numberField(item, "chapterId") ?? 0}`,
       imageUrl: imageUrlForSeries(client, seriesId, item),
       title: stringField(item, "name", "title", "seriesName") ?? "Untitled",
       subtitle: stringField(item, "localizedName", "libraryName"),
       contentRating: ContentRating.EVERYONE,
+    };
+    if (sectionId === "recently-updated") {
+      if (isEpubItem(item)) {
+        return {
+          type: "simpleCarouselItem",
+          ...baseItem,
+        };
+      }
+      return {
+        type: "chapterUpdatesCarouselItem",
+        ...baseItem,
+        chapterId: `kavita-chapter:${numberField(item, "chapterId") ?? 0}`,
+      };
+    }
+    return {
+      type: "simpleCarouselItem",
+      ...baseItem,
+      chapterId: `kavita-chapter:${numberField(item, "chapterId") ?? 0}`,
     };
   }) as DiscoverSectionItem[];
 
@@ -103,6 +119,18 @@ function numberField(item: Record<string, unknown>, ...keys: string[]): number |
     if (typeof value === "number") return value;
   }
   return undefined;
+}
+
+function isEpubItem(item: Record<string, unknown>): boolean {
+  const format = formatName(item.format ?? item.seriesFormat);
+  const library = stringField(item, "libraryType", "libraryName")?.toLowerCase() ?? "";
+  return format.includes("epub") || library.includes("book") || library.includes("novel");
+}
+
+function formatName(value: unknown): string {
+  if (typeof value === "string") return value.toLowerCase();
+  if (value === 3) return "epub";
+  return "";
 }
 
 function imageUrlForSeries(

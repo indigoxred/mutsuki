@@ -4,6 +4,7 @@ import {
   InputRow,
   LabelRow,
   Section,
+  SelectRow,
   StepperRow,
   ToggleRow,
   type FormSectionElement,
@@ -11,6 +12,12 @@ import {
 
 import { normalizeKavitaBaseUrl } from "../shared/url.js";
 import { KavitaClient, type KavitaTransport } from "./client.js";
+import {
+  DEFAULT_NOVEL_RENDERING_MODE,
+  normalizeNovelRenderingMode,
+  NOVEL_RENDERING_MODE_OPTIONS,
+  type NovelRenderingMode,
+} from "./novel-rendering-mode.js";
 
 export interface KavitaSettings {
   baseUrl: string;
@@ -24,6 +31,7 @@ export interface KavitaSettings {
   includeBookLibraries: boolean;
   htmlResourceSizeLimit: number;
   htmlChapterSizeLimit: number;
+  novelRenderingMode: NovelRenderingMode;
   debugLogging: boolean;
 }
 
@@ -39,14 +47,19 @@ export const DEFAULT_KAVITA_SETTINGS: KavitaSettings = {
   includeBookLibraries: true,
   htmlResourceSizeLimit: 2_000_000,
   htmlChapterSizeLimit: 8_000_000,
+  novelRenderingMode: DEFAULT_NOVEL_RENDERING_MODE,
   debugLogging: false,
 };
 
 export function getKavitaSettings(): KavitaSettings {
-  return {
+  const settings = {
     ...DEFAULT_KAVITA_SETTINGS,
     ...(Application.getState("kavitaSettings") as Partial<KavitaSettings> | undefined),
     apiKey: (Application.getSecureState("kavitaApiKey") as string | undefined) ?? "",
+  };
+  return {
+    ...settings,
+    novelRenderingMode: normalizeNovelRenderingMode(settings.novelRenderingMode),
   };
 }
 
@@ -136,6 +149,18 @@ export class KavitaSettingsForm extends Form {
         }),
       ]),
       Section({ id: "limits", header: "HTML Reader" }, [
+        SelectRow("novel-rendering-mode", {
+          title: "Novel rendering mode",
+          value: [this.settings.novelRenderingMode],
+          minItemCount: 1,
+          maxItemCount: 1,
+          layout: "list",
+          items: NOVEL_RENDERING_MODE_OPTIONS,
+          onValueChange: Application.Selector(
+            this as KavitaSettingsForm,
+            "handleNovelRenderingModeChange",
+          ),
+        }),
         StepperRow("resource-limit", {
           title: "Resource Limit",
           subtitle: "Bytes per EPUB resource.",
@@ -216,6 +241,10 @@ export class KavitaSettingsForm extends Form {
 
   async handleChapterLimitChange(value: number): Promise<void> {
     this.update({ htmlChapterSizeLimit: value });
+  }
+
+  async handleNovelRenderingModeChange(value: string[]): Promise<void> {
+    this.update({ novelRenderingMode: normalizeNovelRenderingMode(value[0]) });
   }
 
   async handleDebugLoggingChange(value: boolean): Promise<void> {

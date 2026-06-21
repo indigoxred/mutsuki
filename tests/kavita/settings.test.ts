@@ -4,6 +4,10 @@ import test from "node:test";
 import type { KavitaRequest } from "../../src/Kavita/client.js";
 import { DEFAULT_KAVITA_SETTINGS, KavitaSettingsForm } from "../../src/Kavita/settings.js";
 
+test("novel rendering mode defaults to full EPUB rendering", () => {
+  assert.equal(DEFAULT_KAVITA_SETTINGS.novelRenderingMode, "full-epub");
+});
+
 test("settings test connection probes the current account endpoint", async () => {
   const requests: KavitaRequest[] = [];
   installApplicationStub({

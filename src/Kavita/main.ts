@@ -19,6 +19,7 @@ import {
   type SourceManga,
 } from "@paperback/types";
 
+import { MUTSUKI_KAVITA_BUILD } from "./build-info.js";
 import { KavitaClient, type KavitaTransport } from "./client.js";
 import { getKavitaDiscoverItems, getKavitaDiscoverSections } from "./discovery.js";
 import { getKavitaSettings, KavitaSettingsForm } from "./settings.js";
@@ -93,9 +94,14 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
   async getChapters(sourceManga: SourceManga, _sinceDate?: Date): Promise<Chapter[]> {
     const client = this.client();
     const seriesId = kavitaSeriesIdFromMangaId(sourceManga.mangaId);
+    const serverSourceManga = sourceMangaFromKavitaSeries(
+      await client.getSeriesDetails(seriesId),
+      (id) => client.getSeriesCoverUrl(id),
+    );
     const chapters = parseKavitaChapterDtos(await client.getVolumes(seriesId));
 
-    if (sourceManga.mangaInfo.contentType === "novel") {
+    if (serverSourceManga.mangaInfo.contentType === "novel") {
+      const novelSourceManga = correctedNovelSourceManga(sourceManga, serverSourceManga);
       const nested: Chapter[][] = [];
       for (const chapter of chapters) {
         const bookInfo = await client.getBookInfo(chapter.id);
@@ -105,7 +111,7 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
             : {};
         nested.push(
           await getNovelChaptersFromBook({
-            sourceManga,
+            sourceManga: novelSourceManga,
             client,
             kavitaSeriesId: seriesId,
             kavitaVolumeId: numberValue(info.volumeId),
@@ -129,8 +135,14 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
         sourceManga: chapter.sourceManga,
         chapter,
         client,
+        renderingMode: settings.novelRenderingMode,
         maxResourceBytes: settings.htmlResourceSizeLimit,
         maxChapterBytes: settings.htmlChapterSizeLimit,
+        debugLogging: settings.debugLogging,
+        build: MUTSUKI_KAVITA_BUILD,
+        incomingContentType: chapter.sourceManga.mangaInfo.contentType,
+        resolvedContentType: "novel",
+        kavitaFormat: chapter.sourceManga.mangaInfo.additionalInfo?.format,
       });
     }
 
@@ -180,4 +192,22 @@ export const MutsukiKavita = Kavita;
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function correctedNovelSourceManga(
+  sourceManga: SourceManga,
+  serverSourceManga: SourceManga,
+): SourceManga {
+  return {
+    ...sourceManga,
+    mangaInfo: {
+      ...sourceManga.mangaInfo,
+      ...serverSourceManga.mangaInfo,
+      additionalInfo: {
+        ...sourceManga.mangaInfo.additionalInfo,
+        ...serverSourceManga.mangaInfo.additionalInfo,
+      },
+      contentType: "novel",
+    },
+  };
 }

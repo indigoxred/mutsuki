@@ -28,6 +28,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Stamp Kavita build metadata
+        run: |
+          short_sha="${GITHUB_SHA::7}"
+          sed -i "s/MUTSUKI_KAVITA_SHORT_SHA = \".*\"/MUTSUKI_KAVITA_SHORT_SHA = \"${short_sha}\"/" src/Kavita/build-info.ts
       - run: pnpm run bundle
       - run: touch bundles/.nojekyll
       - uses: actions/upload-pages-artifact@v3

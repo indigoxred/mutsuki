@@ -79,3 +79,28 @@ test("uses discover metadata as the next Kavita page number", async () => {
   assert.deepEqual(calls, [[3, 40]]);
   assert.equal(page.metadata, undefined);
 });
+
+test("recently updated EPUB items do not emit manga chapter ids", async () => {
+  const client = {
+    getRecentlyUpdated: async () => [
+      {
+        seriesId: 42,
+        name: "A Simple Survey",
+        localizedName: "A Simple Survey",
+        format: 3,
+        chapterId: 55,
+      },
+    ],
+    getSeriesCoverUrl: (seriesId: number) => `cover-${seriesId}`,
+  };
+
+  const page = await getKavitaDiscoverItems(
+    client as unknown as Parameters<typeof getKavitaDiscoverItems>[0],
+    "recently-updated",
+    10,
+  );
+
+  assert.equal(page.items[0]?.type, "simpleCarouselItem");
+  assert.equal("chapterId" in (page.items[0] as unknown as Record<string, unknown>), false);
+  assert.equal(page.items[0]?.mangaId, "kavita-series:42");
+});
