@@ -23,8 +23,8 @@ test("normalizes LAN Kavita URLs when the runtime has no URL constructor", () =>
       "http://192.168.50.138:5000",
     );
     assert.equal(
-      toKavitaApiUrl("http://192.168.50.138:5000/api", "/Account/validate"),
-      "http://192.168.50.138:5000/api/Account/validate",
+      toKavitaApiUrl("http://192.168.50.138:5000/api", "/Account"),
+      "http://192.168.50.138:5000/api/Account",
     );
     assert.equal(
       isSameOrigin(

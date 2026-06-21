@@ -10,6 +10,7 @@ import {
 } from "@paperback/types";
 
 import { normalizeKavitaBaseUrl } from "../shared/url.js";
+import { KavitaClient, type KavitaTransport } from "./client.js";
 
 export interface KavitaSettings {
   baseUrl: string;
@@ -223,10 +224,15 @@ export class KavitaSettingsForm extends Form {
 
   async handleTestConnection(): Promise<void> {
     try {
-      normalizeKavitaBaseUrl(this.settings.baseUrl);
-      if (!this.settings.apiKey.trim()) throw new Error("Missing Kavita API key.");
-      this.connectionStatus =
-        "Configuration looks valid. Live server check runs when installed in Paperback.";
+      const baseUrl = normalizeKavitaBaseUrl(this.settings.baseUrl);
+      const apiKey = this.settings.apiKey.trim();
+      if (!apiKey) throw new Error("Missing Kavita auth key.");
+      await new KavitaClient({
+        baseUrl,
+        apiKey,
+        transport: settingsTransport,
+      }).testConnection();
+      this.connectionStatus = "Connection verified.";
     } catch (error) {
       this.connectionStatus = error instanceof Error ? error.message : "Invalid Kavita settings.";
     }
@@ -238,3 +244,14 @@ export class KavitaSettingsForm extends Form {
     setKavitaSettings(this.settings);
   }
 }
+
+const settingsTransport: KavitaTransport = async (request) => {
+  const [response, buffer] = await Application.scheduleRequest(request);
+  const contentType = response.headers["content-type"] ?? response.mimeType;
+  const isText = contentType?.includes("json") || contentType?.startsWith("text/");
+  return {
+    status: response.status,
+    headers: response.headers,
+    body: isText ? Application.arrayBufferToUTF8String(buffer) : buffer,
+  };
+};

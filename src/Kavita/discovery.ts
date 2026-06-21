@@ -9,7 +9,9 @@ import type { KavitaClient } from "./client.js";
 import type { KavitaSettings } from "./settings.js";
 
 export function getKavitaDiscoverSections(settings: KavitaSettings): DiscoverSection[] {
-  const sections: DiscoverSection[] = [];
+  const sections: DiscoverSection[] = [
+    { id: "all-series", title: "All Series", type: DiscoverSectionType.simpleCarousel },
+  ];
   if (settings.showOnDeck)
     sections.push({ id: "on-deck", title: "On Deck", type: DiscoverSectionType.prominentCarousel });
   if (settings.showRecentlyUpdated) {
@@ -34,15 +36,21 @@ export async function getKavitaDiscoverItems(
   pageSize: number,
 ): Promise<DiscoverSectionItem[]> {
   const payload =
-    sectionId === "on-deck"
-      ? await client.getOnDeck(0, pageSize)
-      : sectionId === "recently-updated"
-        ? await client.getRecentlyUpdated(0, pageSize)
-        : await client.getNewlyAdded(0, pageSize);
+    sectionId === "all-series"
+      ? await client.getAllSeries(0, pageSize)
+      : sectionId === "on-deck"
+        ? await client.getOnDeck(0, pageSize)
+        : sectionId === "recently-updated"
+          ? await client.getRecentlyUpdated(0, pageSize)
+          : sectionId === "newly-added"
+            ? await client.getNewlyAdded(0, pageSize)
+            : undefined;
+
+  if (payload === undefined) throw new Error(`Unknown Kavita discover section: ${sectionId}`);
 
   return asArray(payload).map((item) => ({
     type: sectionId === "recently-updated" ? "chapterUpdatesCarouselItem" : "simpleCarouselItem",
-    mangaId: `kavita-series:${numberField(item, "id", "seriesId") ?? 0}`,
+    mangaId: `kavita-series:${numberField(item, "seriesId", "id") ?? 0}`,
     chapterId: `kavita-chapter:${numberField(item, "chapterId") ?? 0}`,
     imageUrl: stringField(item, "coverImage", "imageUrl", "thumbnailUrl") ?? "",
     title: stringField(item, "name", "title", "seriesName") ?? "Untitled",

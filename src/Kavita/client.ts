@@ -23,6 +23,11 @@ export interface KavitaClientOptions {
   transport: KavitaTransport;
 }
 
+interface SeriesFilterBody {
+  statements: unknown[];
+  combination: 0;
+}
+
 export class KavitaClient {
   readonly baseUrl: string;
   private readonly apiKey: string;
@@ -35,19 +40,23 @@ export class KavitaClient {
   }
 
   async testConnection(): Promise<unknown> {
-    return this.getJson("/Account/validate");
+    return this.getJson("/Account");
   }
 
   async getLibraries(): Promise<unknown> {
     return this.getJson("/Library/libraries");
   }
 
-  async getSeriesForLibrary(libraryId: number, pageNumber = 0, pageSize = 50): Promise<unknown> {
-    return this.getJson("/Series/all-v2", { libraryId, pageNumber, pageSize });
+  async getAllSeries(pageNumber = 0, pageSize = 50): Promise<unknown> {
+    return this.postJson("/Series/all-v2", emptySeriesFilter(), { pageNumber, pageSize });
   }
 
-  async searchSeries(query: string, pageNumber = 0, pageSize = 50): Promise<unknown> {
-    return this.getJson("/Search/series", { query, pageNumber, pageSize });
+  async getSeriesForLibrary(_libraryId: number, pageNumber = 0, pageSize = 50): Promise<unknown> {
+    return this.getAllSeries(pageNumber, pageSize);
+  }
+
+  async searchSeries(query: string, _pageNumber = 0, _pageSize = 50): Promise<unknown> {
+    return this.getJson("/Search/search", { queryString: query, includeChapterAndFiles: false });
   }
 
   async getSeriesDetails(seriesId: number): Promise<unknown> {
@@ -67,15 +76,18 @@ export class KavitaClient {
   }
 
   async getOnDeck(pageNumber = 0, pageSize = 50): Promise<unknown> {
-    return this.getJson("/Series/on-deck", { pageNumber, pageSize });
+    return this.postJson("/Series/on-deck", undefined, { pageNumber, pageSize });
   }
 
   async getRecentlyUpdated(pageNumber = 0, pageSize = 50): Promise<unknown> {
-    return this.getJson("/Series/recently-updated", { pageNumber, pageSize });
+    return this.postJson("/Series/recently-updated-series", undefined, { pageNumber, pageSize });
   }
 
   async getNewlyAdded(pageNumber = 0, pageSize = 50): Promise<unknown> {
-    return this.getJson("/Series/newly-added", { pageNumber, pageSize });
+    return this.postJson("/Series/recently-added-v2", emptySeriesFilter(), {
+      pageNumber,
+      pageSize,
+    });
   }
 
   async getBookInfo(chapterId: number): Promise<unknown> {
@@ -130,14 +142,16 @@ export class KavitaClient {
     query?: Record<string, string | number | boolean | undefined>,
   ): Promise<unknown> {
     const response = await this.request("GET", path, query);
-    if (typeof response.body !== "string") {
-      return JSON.parse(new TextDecoder().decode(response.body));
-    }
-    try {
-      return JSON.parse(response.body);
-    } catch {
-      return response.body;
-    }
+    return parseJsonBody(response.body);
+  }
+
+  private async postJson(
+    path: string,
+    body?: unknown,
+    query?: Record<string, string | number | boolean | undefined>,
+  ): Promise<unknown> {
+    const response = await this.request("POST", path, query, body);
+    return parseJsonBody(response.body);
   }
 
   private async request(
@@ -164,6 +178,21 @@ export class KavitaClient {
     }
 
     return response;
+  }
+}
+
+function emptySeriesFilter(): SeriesFilterBody {
+  return { statements: [], combination: 0 };
+}
+
+function parseJsonBody(body: string | ArrayBuffer): unknown {
+  if (typeof body !== "string") {
+    return JSON.parse(new TextDecoder().decode(body));
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    return body;
   }
 }
 

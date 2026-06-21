@@ -20,10 +20,10 @@ DRM-protected EPUBs, EPUB JavaScript execution, PDF text reflow, a standalone ba
 1. Install the `Mutsuki Kavita` extension source in Paperback after bundling or serving this repository.
 2. Open the extension settings.
 3. Enter the Kavita server URL. URLs with or without `/api` are accepted.
-4. Enter the Kavita OPDS Authorization Key from **User Settings -> Manage Auth Keys**.
+4. Enter a Kavita Auth Key from **User Settings -> Manage Auth Keys**. Use the general auth key Kavita accepts for API requests, not the image-only key.
 5. Use **Test Connection** for local validation, then browse/search from Paperback.
 
-Mutsuki preserves HTTP when a local server is explicitly configured as HTTP. API keys are stored in Paperback secure state and are redacted from logs and errors.
+Mutsuki uses Kavita's REST API with the auth key header for browse and read requests. It does not browse through OPDS feeds. Mutsuki preserves HTTP when a local server is explicitly configured as HTTP. API keys are stored in Paperback secure state and are redacted from logs and errors.
 
 ## MyAnimeList Setup
 
@@ -65,7 +65,7 @@ https://indigoxred.github.io/mutsuki/
 ## Tested Baseline
 
 - Paperback packages: `@paperback/types` and `@paperback/toolchain` `1.0.0-alpha.92`.
-- Kavita endpoint references: upstream `Kareadita/Kavita` `BookController` and `ReaderController` on `develop` as inspected on 2026-06-20.
+- Kavita endpoint references: upstream `Kareadita/Kavita` `AccountController`, `SeriesController`, `SearchController`, `BookController`, and `ReaderController` on `develop` as inspected on 2026-06-21.
 - Automated tests use synthetic fixtures and mocked transports. Live Paperback device verification is still required for OAuth callbacks, installed bundle behavior, and HTML reader rendering.
 
 ## Attribution
