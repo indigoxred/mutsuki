@@ -20,6 +20,7 @@ export async function rewriteHtmlResources(
   let html = input.html;
 
   html = await rewriteStylesheets(html, input, warnings);
+  html = await rewriteInlineStyleBlocks(html, input, warnings);
   html = await rewriteImageAttributes(html, input, warnings);
 
   if (utf8ByteLength(html) > input.maxChapterBytes) {
@@ -41,13 +42,28 @@ async function rewriteStylesheets(
     stylesheetPattern,
     async (_match, before: string, _quote: string, href: string, after: string) => {
       if (!/\brel=(["'])stylesheet\1/iu.test(`${before} ${after}`)) return _match;
-      const path = resolveEpubPath(input.basePath, href);
+      const path = resolveFetchableResourcePath(input.basePath, href);
+      if (path === undefined) return _match;
       const resource = await fetchBounded(path, input, warnings);
       if (!resource) return missingResourcePlaceholder(path, "Stylesheet unavailable");
       const css = new TextDecoder().decode(resource.bytes);
       const inlined = await rewriteCssUrls(css, path, input, warnings);
       return `<style>${inlined}</style>`;
     },
+  );
+}
+
+async function rewriteInlineStyleBlocks(
+  html: string,
+  input: ResourceRewriteInput,
+  warnings: string[],
+): Promise<string> {
+  const stylePattern = /<style\b([^>]*)>([\s\S]*?)<\/style>/giu;
+  return replaceAsync(
+    html,
+    stylePattern,
+    async (_match, attributes: string, css: string) =>
+      `<style${attributes}>${await rewriteCssUrls(css, input.basePath, input, warnings)}</style>`,
   );
 }
 
@@ -61,7 +77,8 @@ async function rewriteImageAttributes(
     html,
     imagePattern,
     async (_match, before: string, _quote: string, src: string, after: string) => {
-      const path = resolveEpubPath(input.basePath, src);
+      const path = resolveFetchableResourcePath(input.basePath, src);
+      if (path === undefined) return _match;
       const alt = extractAttribute(`${before} ${after}`, "alt") ?? "Image unavailable";
       const resource = await fetchBounded(path, input, warnings);
       if (!resource) return missingResourcePlaceholder(path, alt);
@@ -77,9 +94,10 @@ async function rewriteCssUrls(
   input: ResourceRewriteInput,
   warnings: string[],
 ): Promise<string> {
-  const urlPattern = /url\(\s*(["']?)(?!data:|https?:|#)([^"')]+)\1\s*\)/giu;
+  const urlPattern = /url\(\s*(["']?)(?!data:|#)([^"')]+)\1\s*\)/giu;
   return replaceAsync(css, urlPattern, async (_match, _quote: string, href: string) => {
-    const path = resolveEpubPath(stylesheetPath, href.trim());
+    const path = resolveFetchableResourcePath(stylesheetPath, href.trim());
+    if (path === undefined) return _match;
     const resource = await fetchBounded(path, input, warnings);
     return resource ? `url("${toDataUrl(resource)}")` : "none";
   });
@@ -106,6 +124,35 @@ async function fetchBounded(
 
 function missingResourcePlaceholder(path: string, label: string): string {
   return `<span data-mutsuki-missing-resource="${escapeHtml(path)}">${escapeHtml(label)}</span>`;
+}
+
+function resolveFetchableResourcePath(basePath: string, href: string): string | undefined {
+  const kavitaResourcePath = extractKavitaBookResourceFile(href);
+  if (kavitaResourcePath !== undefined) return kavitaResourcePath;
+  if (isExternalOrSpecialUrl(href)) return undefined;
+  return resolveEpubPath(basePath, href);
+}
+
+function extractKavitaBookResourceFile(href: string): string | undefined {
+  const withoutHash = href.split("#")[0] ?? "";
+  const queryIndex = withoutHash.indexOf("?");
+  if (queryIndex < 0) return undefined;
+
+  const path = withoutHash.slice(0, queryIndex);
+  if (!/\/book\/\d+\/book-resources$/iu.test(path)) return undefined;
+
+  const query = withoutHash.slice(queryIndex + 1);
+  for (const part of query.split("&")) {
+    const [rawName = "", rawValue = ""] = part.split("=");
+    if (decodeQueryComponent(rawName) === "file") {
+      return decodeQueryComponent(rawValue);
+    }
+  }
+  return undefined;
+}
+
+function isExternalOrSpecialUrl(href: string): boolean {
+  return /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/iu.test(href.trim());
 }
 
 function resolveEpubPath(basePath: string, relativePath: string): string {
@@ -164,6 +211,10 @@ function escapeHtml(value: string): string {
     .replace(/</gu, "&lt;")
     .replace(/>/gu, "&gt;")
     .replace(/"/gu, "&quot;");
+}
+
+function decodeQueryComponent(value: string): string {
+  return decodeURIComponent(value.replace(/\+/gu, " "));
 }
 
 async function replaceAsync(

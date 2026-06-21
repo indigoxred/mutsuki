@@ -15,6 +15,8 @@ export async function getNovelChaptersFromBook(input: {
   volumeNumber: number;
   totalPages: number;
 }): Promise<Chapter[]> {
+  if (!Number.isFinite(input.totalPages) || input.totalPages < 1) return [];
+
   const toc = await input.client.getBookChapters(input.kavitaChapterId);
   return logicalChaptersFromToc({
     kavitaSeriesId: input.kavitaSeriesId,
