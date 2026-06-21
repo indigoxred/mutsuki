@@ -18,7 +18,6 @@ export async function assembleHtmlChapter(input: AssembleHtmlChapterInput): Prom
 
   return normalizeXhtml(
     [
-      "<!doctype html>",
       '<html xmlns="http://www.w3.org/1999/xhtml">',
       "<head>",
       '<meta charset="utf-8">',
@@ -50,7 +49,12 @@ function sanitizeExecutableContent(html: string): string {
 function normalizeXhtml(html: string): string {
   return html
     .replace(/\u00a0/gu, " ")
-    .replace(/&nbsp;/giu, " ")
+    .replace(/&(#x[0-9a-f]+;|#\d+;|[a-z][a-z0-9]+;)?/giu, normalizeEntity)
+    .replace(
+      /<style\b([^>]*)>([\s\S]*?)<\/style>/giu,
+      (_match, attributes: string, css: string) =>
+        `<style${attributes}>${removePageRules(css)}</style>`,
+    )
     .replace(VOID_TAG_PATTERN, (match: string, tag: string, attributes = "") => {
       if (/\/\s*>$/u.test(match)) return match;
       return `<${tag}${attributes} />`;
@@ -68,6 +72,74 @@ function rewriteAnchors(html: string): string {
       /\bhref=(["'])#([^"']+)\1/giu,
       (_match, quote: string, id: string) => `href=${quote}#mutsuki-${id}${quote}`,
     );
+}
+
+const XML_ENTITY_NAMES: Record<string, string> = {
+  amp: "&amp;",
+  apos: "&apos;",
+  gt: "&gt;",
+  lt: "&lt;",
+  quot: "&quot;",
+};
+
+const HTML_ENTITY_REPLACEMENTS: Record<string, string> = {
+  bull: "&#8226;",
+  copy: "&#169;",
+  hellip: "&#8230;",
+  laquo: "&#171;",
+  ldquo: "&#8220;",
+  lsquo: "&#8216;",
+  mdash: "&#8212;",
+  middot: "&#183;",
+  nbsp: " ",
+  ndash: "&#8211;",
+  raquo: "&#187;",
+  rdquo: "&#8221;",
+  reg: "&#174;",
+  rsquo: "&#8217;",
+  trade: "&#8482;",
+};
+
+function normalizeEntity(match: string, entity: string | undefined): string {
+  if (entity === undefined) return "&amp;";
+  const body = entity.slice(0, -1);
+  const lower = body.toLowerCase();
+  if (/^#(?:x[0-9a-f]+|\d+)$/iu.test(body)) return `&${body};`;
+  if (XML_ENTITY_NAMES[lower] !== undefined) return XML_ENTITY_NAMES[lower];
+  const replacement = HTML_ENTITY_REPLACEMENTS[lower];
+  return replacement === undefined ? `&amp;${body};` : replacement;
+}
+
+function removePageRules(css: string): string {
+  let output = "";
+  let index = 0;
+  const pageRulePattern = /@page\b/giu;
+  let match: RegExpExecArray | null;
+  while ((match = pageRulePattern.exec(css)) !== null) {
+    output += css.slice(index, match.index);
+    const blockStart = css.indexOf("{", match.index);
+    if (blockStart < 0) {
+      index = match.index + match[0].length;
+      continue;
+    }
+    const blockEnd = matchingBraceIndex(css, blockStart);
+    index = blockEnd < 0 ? css.length : blockEnd + 1;
+    pageRulePattern.lastIndex = index;
+  }
+  return output + css.slice(index);
+}
+
+function matchingBraceIndex(css: string, blockStart: number): number {
+  let depth = 0;
+  for (let index = blockStart; index < css.length; index += 1) {
+    const character = css[index];
+    if (character === "{") depth += 1;
+    if (character === "}") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
 }
 
 function escapeHtml(value: string): string {

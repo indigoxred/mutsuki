@@ -10,10 +10,19 @@ import {
 import { rewriteHtmlResources } from "./resource-rewriter.js";
 import { logicalChaptersFromToc } from "./toc.js";
 
+const STATIC_PROBE_PARAGRAPH =
+  "Mutsuki HTML reader probe paragraph for deterministic pagination. " +
+  "This diagnostic text is intentionally plain, local, and repeated so Paperback has enough visible content to paginate without fetching Kavita resources.";
+
 export const STATIC_PROBE_HTML =
   '<html xmlns="http://www.w3.org/1999/xhtml">' +
   "<head></head>" +
-  "<body><p>Mutsuki HTML reader probe</p></body>" +
+  "<body>" +
+  Array.from(
+    { length: 16 },
+    (_unused, index) => `<p>${STATIC_PROBE_PARAGRAPH} Paragraph ${index + 1}.</p>`,
+  ).join("") +
+  "</body>" +
   "</html>";
 
 type HtmlChapterDetails = ChapterDetails & { type: "html"; html: string };

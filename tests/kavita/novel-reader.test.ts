@@ -101,7 +101,8 @@ test("static probe returns non-empty HTML details without pages", async () => {
 
   assert.equal(details.type, "html");
   assert.equal(details.html, STATIC_PROBE_HTML);
-  assert.ok(details.html.length > 0);
+  assert.ok(visibleText(details.html).length >= 2_000);
+  assert.equal(details.html.includes("<!doctype"), false);
   assert.equal("pages" in details, false);
 });
 
@@ -203,6 +204,45 @@ test("ten-page EPUB details never request page ten", async () => {
   assert.deepEqual(requestedPages, [8, 9]);
 });
 
+test("full EPUB details inline authenticated Kavita resources without leaking API keys", async () => {
+  const requestedResources: string[] = [];
+  const details = await getNovelChapterDetails({
+    sourceManga: novelSourceManga(),
+    chapter: novelChapter({ startPage: 0, endPage: 0 }),
+    client: {
+      async getBookInfo() {
+        return { pages: 1 };
+      },
+      async getBookPage() {
+        return '<p>Illustrated text</p><img alt="Cover" src="https://read.negev.red/api/Book/55/book-resources?file=images%2Fcover.png&apiKey=secret-key">';
+      },
+      async getBookResource(_chapterId: number, path: string) {
+        requestedResources.push(path);
+        return {
+          bytes: new Uint8Array([1, 2, 3]).buffer,
+          mimeType: "image/png",
+        };
+      },
+    } as unknown as KavitaClient,
+    renderingMode: "full-epub",
+    maxResourceBytes: 1_000,
+    maxChapterBytes: 20_000,
+    debugLogging: false,
+    build: "0.1.3+test",
+    incomingContentType: "novel",
+    resolvedContentType: "novel",
+    kavitaFormat: "epub",
+  });
+
+  assert.equal(details.type, "html");
+  assert.equal("pages" in details, false);
+  assert.deepEqual(requestedResources, ["images/cover.png"]);
+  assert.equal(details.html.includes("secret-key"), false);
+  assert.equal(details.html.includes("read.negev.red"), false);
+  assert.equal(details.html.includes("/api/Book/55/book-resources"), false);
+  assert.match(details.html, /src="data:image\/png;base64,AQID"/u);
+});
+
 function novelSourceManga(): SourceManga {
   return {
     mangaId: "kavita-series:7",
@@ -231,4 +271,13 @@ function novelChapter(input: { startPage: number; endPage: number }): Chapter {
       endPage: String(input.endPage),
     },
   };
+}
+
+function visibleText(html: string): string {
+  return html
+    .replace(/<script\b[\s\S]*?<\/script>/giu, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/giu, " ")
+    .replace(/<[^>]+>/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
