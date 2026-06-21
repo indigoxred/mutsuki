@@ -32,7 +32,8 @@ test("constructs current Kavita book and reader endpoints with sanitized auth", 
       "POST http://localhost:5000/api/Reader/mark-chapter-read",
     ],
   );
-  assert.equal(requests[0]?.headers?.Authorization, "Bearer secret-key");
+  assert.equal(requests[0]?.headers?.["x-api-key"], "secret-key");
+  assert.equal(requests[0]?.headers?.Authorization, undefined);
 });
 
 test("builds authenticated image URLs only for the configured Kavita host", () => {

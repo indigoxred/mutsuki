@@ -20,7 +20,7 @@ DRM-protected EPUBs, EPUB JavaScript execution, PDF text reflow, a standalone ba
 1. Install the `Mutsuki Kavita` extension source in Paperback after bundling or serving this repository.
 2. Open the extension settings.
 3. Enter the Kavita server URL. URLs with or without `/api` are accepted.
-4. Enter a Kavita API key.
+4. Enter the Kavita OPDS Authorization Key from **User Settings -> Manage Auth Keys**.
 5. Use **Test Connection** for local validation, then browse/search from Paperback.
 
 Mutsuki preserves HTTP when a local server is explicitly configured as HTTP. API keys are stored in Paperback secure state and are redacted from logs and errors.

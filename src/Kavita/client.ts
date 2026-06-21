@@ -152,7 +152,7 @@ export class KavitaClient {
       url,
       method,
       headers: {
-        Authorization: `Bearer ${this.apiKey}`,
+        "x-api-key": this.apiKey,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       body: body === undefined ? undefined : JSON.stringify(body),

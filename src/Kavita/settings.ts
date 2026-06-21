@@ -68,7 +68,7 @@ export class KavitaSettingsForm extends Form {
           onValueChange: Application.Selector(this as KavitaSettingsForm, "handleBaseUrlChange"),
         }),
         InputRow("api-key", {
-          title: "API Key",
+          title: "Auth Key",
           value: this.settings.apiKey,
           isSecureEntry: true,
           onValueChange: Application.Selector(this as KavitaSettingsForm, "handleApiKeyChange"),
