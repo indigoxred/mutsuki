@@ -13,6 +13,16 @@ import {
 import { normalizeKavitaBaseUrl } from "../shared/url.js";
 import { KavitaClient, type KavitaTransport } from "./client.js";
 import {
+  DEFAULT_LARGE_EPUB_HANDLING,
+  DEFAULT_TARGET_SOURCE_PAGES_PER_PART,
+  LARGE_EPUB_HANDLING_OPTIONS,
+  MAX_TARGET_SOURCE_PAGES_PER_PART,
+  MIN_TARGET_SOURCE_PAGES_PER_PART,
+  normalizeLargeEpubHandling,
+  normalizeTargetSourcePagesPerPart,
+  type LargeEpubHandling,
+} from "./large-epub-handling.js";
+import {
   DEFAULT_NOVEL_LISTING_MODE,
   normalizeNovelListingMode,
   NOVEL_LISTING_MODE_OPTIONS,
@@ -38,6 +48,8 @@ export interface KavitaSettings {
   htmlResourceSizeLimit: number;
   htmlChapterSizeLimit: number;
   novelListingMode: NovelListingMode;
+  largeEpubHandling: LargeEpubHandling;
+  targetSourcePagesPerPart: number;
   includePublisherExtras: boolean;
   novelRenderingMode: NovelRenderingMode;
   debugLogging: boolean;
@@ -56,6 +68,8 @@ export const DEFAULT_KAVITA_SETTINGS: KavitaSettings = {
   htmlResourceSizeLimit: 2_000_000,
   htmlChapterSizeLimit: 8_000_000,
   novelListingMode: DEFAULT_NOVEL_LISTING_MODE,
+  largeEpubHandling: DEFAULT_LARGE_EPUB_HANDLING,
+  targetSourcePagesPerPart: DEFAULT_TARGET_SOURCE_PAGES_PER_PART,
   includePublisherExtras: false,
   novelRenderingMode: DEFAULT_NOVEL_RENDERING_MODE,
   debugLogging: false,
@@ -70,6 +84,8 @@ export function getKavitaSettings(): KavitaSettings {
   return {
     ...settings,
     novelListingMode: normalizeNovelListingMode(settings.novelListingMode),
+    largeEpubHandling: normalizeLargeEpubHandling(settings.largeEpubHandling),
+    targetSourcePagesPerPart: normalizeTargetSourcePagesPerPart(settings.targetSourcePagesPerPart),
     novelRenderingMode: normalizeNovelRenderingMode(settings.novelRenderingMode),
     includePublisherExtras: Boolean(settings.includePublisherExtras),
   };
@@ -187,6 +203,32 @@ export class KavitaSettingsForm extends Form {
             "handleNovelRenderingModeChange",
           ),
         }),
+        SelectRow("large-epub-handling", {
+          title: "Large EPUB handling",
+          value: [this.settings.largeEpubHandling],
+          minItemCount: 1,
+          maxItemCount: 1,
+          layout: "list",
+          items: LARGE_EPUB_HANDLING_OPTIONS,
+          subtitle:
+            "Auto split preserves formatting and loading speed. Single entry is legacy and may exceed the XHTML budget.",
+          onValueChange: Application.Selector(
+            this as KavitaSettingsForm,
+            "handleLargeEpubHandlingChange",
+          ),
+        }),
+        StepperRow("target-source-pages-per-part", {
+          title: "Target source pages per part",
+          value: this.settings.targetSourcePagesPerPart,
+          minValue: MIN_TARGET_SOURCE_PAGES_PER_PART,
+          maxValue: MAX_TARGET_SOURCE_PAGES_PER_PART,
+          stepValue: 16,
+          loopOver: false,
+          onValueChange: Application.Selector(
+            this as KavitaSettingsForm,
+            "handleTargetSourcePagesPerPartChange",
+          ),
+        }),
         ToggleRow("include-publisher-extras", {
           title: "Include publisher extras",
           value: this.settings.includePublisherExtras,
@@ -284,6 +326,14 @@ export class KavitaSettingsForm extends Form {
 
   async handleNovelListingModeChange(value: string[]): Promise<void> {
     this.update({ novelListingMode: normalizeNovelListingMode(value[0]) });
+  }
+
+  async handleLargeEpubHandlingChange(value: string[]): Promise<void> {
+    this.update({ largeEpubHandling: normalizeLargeEpubHandling(value[0]) });
+  }
+
+  async handleTargetSourcePagesPerPartChange(value: number): Promise<void> {
+    this.update({ targetSourcePagesPerPart: normalizeTargetSourcePagesPerPart(value) });
   }
 
   async handleIncludePublisherExtrasChange(value: boolean): Promise<void> {

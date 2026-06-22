@@ -29,7 +29,11 @@ Mutsuki uses Kavita's REST API with the auth key header for browse and read requ
 
 Mutsuki Kavita has two novel listing modes.
 
-**Physical Books** is the default and recommended mode. It mirrors Kavita's Books list, returns one Paperback entry per physical EPUB, preserves decimal volumes such as `5.5` and `8.5`, and is the best fit for volume-only MAL tracking. Paperback may use reading progress as a tie-breaker when every book has the same chapter number, so this mode uses a stable physical-book sequence as the Paperback chapter number while keeping the real Kavita volume in the `Vol.` field.
+**Physical Books** is the default and recommended mode. It mirrors Kavita's Books list, normally returns one Paperback entry per physical EPUB, preserves decimal volumes such as `5.5` and `8.5`, and is the best fit for volume-only MAL tracking. Oversized EPUBs are automatically split into bounded reading parts so Mutsuki can preserve formatting and avoid fetching an entire omnibus at once. Paperback may use reading progress as a tie-breaker when every book has the same chapter number, so this mode uses a stable physical-book sequence as the Paperback chapter number while keeping the real Kavita volume in the `Vol.` field.
+
+Large EPUB handling defaults to **Auto split oversized books**. Each returned part still belongs to the same physical Kavita EPUB, and only the final part completes the Kavita book and MAL volume. Auto split uses the EPUB TOC and page counts to avoid huge loading times and the formatting-destructive fallback that would otherwise turn large semantic XHTML into plain text. **Single entry** remains available as a legacy compatibility option, but very large books can be slow or exceed the completed XHTML budget.
+
+Plain Text rendering mode is diagnostic. It intentionally discards EPUB formatting so text decoding can be isolated from the Full EPUB renderer.
 
 **Internal EPUB Chapters** exposes the EPUB table of contents as individual Paperback chapters. It keeps local chapter numbers, filters publisher newsletters and advertisements by default, and returns source order with contiguous sorting indexes. Paperback's Chapter Number sort may interleave equal local chapter numbers from different volumes, so this mode is experimental when the app cannot honor source order.
 

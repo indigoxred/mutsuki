@@ -421,7 +421,7 @@ function extractKavitaBookResourceFile(href: string): string | undefined {
   const path = withoutHash.slice(0, queryIndex);
   if (!/\/book\/\d+\/book-resources$/iu.test(path)) return undefined;
 
-  const query = withoutHash.slice(queryIndex + 1);
+  const query = withoutHash.slice(queryIndex + 1).replace(/&amp;/giu, "&");
   for (const part of query.split("&")) {
     const [rawName = "", rawValue = ""] = part.split("=");
     if (decodeQueryComponent(rawName) === "file") {

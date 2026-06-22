@@ -1,8 +1,9 @@
 import type { Chapter, ChapterDetails, SourceManga } from "@paperback/types";
 
-import { assembleHtmlChapter } from "./html-assembler.js";
+import { assembleHtmlChapter, type RawEpubPage } from "./html-assembler.js";
 import { KavitaRequestError, type KavitaClient } from "./client.js";
 import { novelChapterToPaperback } from "./chapter-mapper.js";
+import type { KavitaTocItem } from "./models.js";
 import {
   novelRenderingModeDiagnosticName,
   type NovelRenderingMode,
@@ -44,10 +45,11 @@ export async function getNovelChaptersFromBook(input: {
   fallbackTitle?: string;
   totalPages: number;
   includePublisherExtras?: boolean;
+  toc?: KavitaTocItem[];
 }): Promise<Chapter[]> {
   if (!Number.isFinite(input.totalPages) || input.totalPages < 1) return [];
 
-  const toc = await input.client.getBookChapters(input.kavitaChapterId);
+  const toc = input.toc ?? (await input.client.getBookChapters(input.kavitaChapterId));
   return logicalChaptersFromToc({
     kavitaSeriesId: input.kavitaSeriesId,
     kavitaVolumeId: input.kavitaVolumeId,
@@ -182,19 +184,20 @@ export async function getNovelChapterDetails(input: {
     return details;
   }
 
-  const pages: string[] = [];
-  for (let page = startPage; page <= endPage; page += 1) {
-    try {
-      pages.push(await input.client.getBookPage(kavitaChapterId, page));
-    } catch (error) {
-      if (page === endPage && pages.length > 0 && isTrailingUnavailableBookPage(error)) break;
-      throw error;
-    }
-  }
+  const fetchStartedAt = Date.now();
+  const fetched = await fetchBookPagesOrdered({
+    client: input.client,
+    kavitaChapterId,
+    startPage,
+    endPage,
+    concurrency: 4,
+  });
+  const fetchDurationMs = Date.now() - fetchStartedAt;
+  const pages = fetched.pages;
 
   const resourceCache: ResourceFetchCache = new Map();
   const rewriteStats = emptyResourceRewriteStats();
-  const sourceHtml = pages.join("");
+  const sourceHtml = pages.map((page) => page.html).join("");
   const sourceHtmlBytes = htmlByteLength(sourceHtml);
   const sourceVisibleText = extractVisibleText(sourceHtml);
   const projectedHtmlBytesBeforeBudget = estimateResourceFreeChapterBytes(
@@ -205,13 +208,14 @@ export async function getNovelChapterDetails(input: {
     input.maxChapterBytes,
     projectedHtmlBytesBeforeBudget,
   );
+  const transformStartedAt = Date.now();
   let html = await assembleHtmlChapter({
     title: input.chapter.title ?? `Chapter ${input.chapter.chapNum}`,
     pages,
-    rewriteResources: async (fragment) =>
+    rewriteResources: async (fragment, pageNumber) =>
       rewriteAndTrackResources({
         fragment,
-        startPage,
+        pageNumber,
         maxResourceBytes: input.maxResourceBytes,
         maxChapterBytes: input.maxChapterBytes,
         kavitaChapterId,
@@ -227,6 +231,7 @@ export async function getNovelChapterDetails(input: {
     sourceVisibleText,
   });
   html = finalized.html;
+  const transformDurationMs = Date.now() - transformStartedAt;
   rewriteStats.sizeLimitHit ||= resourceBudget.sizeLimitHit || finalized.sizeLimitHit;
   rewriteStats.inlinedResourceCount = resourceBudget.inlinedResourceCount;
   rewriteStats.inlinedResourceBytes = resourceBudget.inlinedResourceBytes;
@@ -244,7 +249,7 @@ export async function getNovelChapterDetails(input: {
   logNovelDiagnostic({
     ...diagnosticBase,
     startPage,
-    endPage,
+    endPage: pages.at(-1)?.pageNumber ?? endPage,
     fetchedPageCount: pages.length,
     htmlBytes: htmlByteLength(details.html),
     visibleTextCharacters: sourceVisibleText.length,
@@ -255,7 +260,7 @@ export async function getNovelChapterDetails(input: {
     finalVisibleTextCharacters: extractVisibleText(details.html).length,
     chapterSizeLimitBytes: input.maxChapterBytes,
     sizeLimitHit: rewriteStats.sizeLimitHit,
-    textFallbackUsed: finalized.textFallbackUsed,
+    textFallbackUsed: false,
     inlinedResourceCount: rewriteStats.inlinedResourceCount,
     inlinedResourceBytes: rewriteStats.inlinedResourceBytes,
     omittedImageCount: rewriteStats.omittedImageCount,
@@ -266,12 +271,37 @@ export async function getNovelChapterDetails(input: {
     rewrittenSvgImageCount: rewriteStats.rewrittenSvgImageCount,
     unresolvedNamespacePrefixCount: countUnresolvedNamespacePrefixes(details.html),
   });
+  logNovelRenderDiagnostic({
+    build: input.build,
+    physicalChapterId: kavitaChapterId,
+    segmentIndex: diagnosticCount(info.segmentIndex),
+    segmentCount: Math.max(1, diagnosticCount(info.segmentCount)),
+    startPage,
+    endPage: pages.at(-1)?.pageNumber ?? endPage,
+    fetchedPageCount: pages.length,
+    fetchConcurrency: fetched.concurrency,
+    fetchDurationMs,
+    transformDurationMs,
+    sourceHtmlBytes,
+    finalHtmlBytes: htmlByteLength(details.html),
+    sourceVisibleTextCharacters: sourceVisibleText.length,
+    finalVisibleTextCharacters: extractVisibleText(details.html).length,
+    uniqueStylesheetCount: (details.html.match(/data-mutsuki-css="publisher"/gu) ?? []).length,
+    duplicateStylesheetCount: 0,
+    insertedSpineBreakCount: Math.max(0, pages.length - 1),
+    injectedTitleCount: (details.html.match(/mutsuki-injected-title/gu) ?? []).length,
+    omittedImageCount: rewriteStats.omittedImageCount,
+    sizeLimitHit: rewriteStats.sizeLimitHit,
+    semanticFallbackUsed: finalized.semanticFallbackUsed,
+    plainTextFallbackUsed: false,
+    debugLogging: input.debugLogging,
+  });
   return details;
 }
 
 async function rewriteAndTrackResources(input: {
   fragment: string;
-  startPage: number;
+  pageNumber: number;
   maxResourceBytes: number;
   maxChapterBytes: number;
   kavitaChapterId: number;
@@ -282,7 +312,7 @@ async function rewriteAndTrackResources(input: {
 }): Promise<string> {
   const rewritten = await rewriteHtmlResources({
     html: input.fragment,
-    basePath: `page-${input.startPage}.xhtml`,
+    basePath: `page-${input.pageNumber}.xhtml`,
     maxResourceBytes: input.maxResourceBytes,
     maxChapterBytes: input.maxChapterBytes,
     resourceCache: input.resourceCache,
@@ -293,8 +323,8 @@ async function rewriteAndTrackResources(input: {
   return rewritten.html;
 }
 
-function estimateResourceFreeChapterBytes(title: string, pages: string[]): number {
-  const strippedPages = pages.map(stripResourceReferencesForBudget).join("");
+function estimateResourceFreeChapterBytes(title: string, pages: RawEpubPage[]): number {
+  const strippedPages = pages.map((page) => stripResourceReferencesForBudget(page.html)).join("");
   return htmlByteLength(
     [
       '<html xmlns="http://www.w3.org/1999/xhtml">',
@@ -331,13 +361,13 @@ function enforceCompletedHtmlLimit(input: {
 }): {
   html: string;
   sizeLimitHit: boolean;
-  textFallbackUsed: boolean;
+  semanticFallbackUsed: boolean;
   omittedImageCount: number;
   omittedCssAssetCount: number;
 } {
   let html = input.html;
   let sizeLimitHit = htmlByteLength(html) > input.maxChapterBytes;
-  let textFallbackUsed = false;
+  let semanticFallbackUsed = false;
   let omittedImageCount = 0;
   let omittedCssAssetCount = 0;
 
@@ -358,16 +388,22 @@ function enforceCompletedHtmlLimit(input: {
     sizeLimitHit = true;
   }
 
+  if (htmlByteLength(html) > input.maxChapterBytes) {
+    html = stripNonsemanticWeight(html);
+    semanticFallbackUsed = true;
+    sizeLimitHit = true;
+  }
+
   if (
     htmlByteLength(html) > input.maxChapterBytes ||
     (input.sourceVisibleText.length > 0 && extractVisibleText(html).length === 0)
   ) {
-    html = wrapPlainTextAsXhtml(input.sourceVisibleText);
-    textFallbackUsed = true;
+    html = oversizedSemanticNotice();
+    semanticFallbackUsed = true;
     sizeLimitHit = true;
   }
 
-  return { html, sizeLimitHit, textFallbackUsed, omittedImageCount, omittedCssAssetCount };
+  return { html, sizeLimitHit, semanticFallbackUsed, omittedImageCount, omittedCssAssetCount };
 }
 
 function replaceLastDataImage(html: string, onReplace: () => void): string {
@@ -383,6 +419,93 @@ function replaceLastDataImage(html: string, onReplace: () => void): string {
     omittedIllustrationPlaceholder(alt) +
     html.slice(match.index + imageHtml.length)
   );
+}
+
+function stripNonsemanticWeight(html: string): string {
+  return html
+    .replace(/\sstyle\s*=\s*(["'])(.*?)\1/giu, "")
+    .replace(
+      /\sclass\s*=\s*(["'])(?!mutsuki-spine-item|mutsuki-page-break|mutsuki-injected-title)(.*?)\1/giu,
+      "",
+    )
+    .replace(/<style\b(?![^>]*data-mutsuki-css)[^>]*>[\s\S]*?<\/style>/giu, "")
+    .replace(/<style\b[^>]*data-mutsuki-css="publisher"[^>]*>[\s\S]*?<\/style>/giu, "");
+}
+
+function oversizedSemanticNotice(): string {
+  return [
+    '<html xmlns="http://www.w3.org/1999/xhtml">',
+    "<head>",
+    '<meta charset="utf-8" />',
+    '<meta name="viewport" content="width=device-width, initial-scale=1" />',
+    "<title>EPUB too large</title>",
+    "<style>body{line-height:1.65;margin:0;padding:1rem}p{margin:.75em 0}</style>",
+    "</head>",
+    "<body>",
+    '<section class="mutsuki-epub-too-large">',
+    "<h1>EPUB too large for Single Entry mode</h1>",
+    "<p>This EPUB is too large to render as one formatted Paperback chapter.</p>",
+    "<p>Enable Auto split oversized books in Mutsuki Kavita settings.</p>",
+    "</section>",
+    "</body>",
+    "</html>",
+  ].join("");
+}
+
+async function fetchBookPagesOrdered(input: {
+  client: KavitaClient;
+  kavitaChapterId: number;
+  startPage: number;
+  endPage: number;
+  concurrency: number;
+}): Promise<{ pages: RawEpubPage[]; concurrency: number }> {
+  const concurrency = Math.min(6, Math.max(2, Math.floor(input.concurrency)));
+  const pageNumbers = Array.from(
+    { length: input.endPage - input.startPage + 1 },
+    (_unused, index) => input.startPage + index,
+  );
+  const results = new Map<number, string>();
+  let nextIndex = 0;
+  let firstError: unknown;
+  let trailingUnavailablePage: number | undefined;
+
+  async function worker(): Promise<void> {
+    while (firstError === undefined) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const page = pageNumbers[index];
+      if (page === undefined) return;
+
+      try {
+        results.set(page, await input.client.getBookPage(input.kavitaChapterId, page));
+      } catch (error) {
+        if (
+          page === input.endPage &&
+          page > input.startPage &&
+          isTrailingUnavailableBookPage(error)
+        ) {
+          trailingUnavailablePage = page;
+          return;
+        }
+        firstError = error;
+        return;
+      }
+    }
+  }
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, pageNumbers.length) }, () => worker()),
+  );
+  if (firstError !== undefined) throw firstError;
+
+  const effectiveEndPage =
+    trailingUnavailablePage === undefined ? input.endPage : input.endPage - 1;
+  return {
+    concurrency,
+    pages: pageNumbers
+      .filter((page) => page <= effectiveEndPage)
+      .map((page) => ({ pageNumber: page, html: results.get(page) ?? "" })),
+  };
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -559,6 +682,61 @@ function isTrailingUnavailableBookPage(error: unknown): boolean {
     error.status === 400 &&
     /\/Book\/\d+\/book-page$/u.test(error.path) &&
     /could not find the appropriate html for that page/iu.test(error.responseMessage)
+  );
+}
+
+function logNovelRenderDiagnostic(input: {
+  build: string;
+  physicalChapterId: number;
+  segmentIndex: number;
+  segmentCount: number;
+  startPage: number;
+  endPage: number;
+  fetchedPageCount: number;
+  fetchConcurrency: number;
+  fetchDurationMs: number;
+  transformDurationMs: number;
+  sourceHtmlBytes: number;
+  finalHtmlBytes: number;
+  sourceVisibleTextCharacters: number;
+  finalVisibleTextCharacters: number;
+  uniqueStylesheetCount: number;
+  duplicateStylesheetCount: number;
+  insertedSpineBreakCount: number;
+  injectedTitleCount: number;
+  omittedImageCount: number;
+  sizeLimitHit: boolean;
+  semanticFallbackUsed: boolean;
+  plainTextFallbackUsed: boolean;
+  debugLogging: boolean;
+}): void {
+  if (!input.debugLogging) return;
+  console.log(
+    [
+      "[MutsukiNovelRender]",
+      `build=${input.build}`,
+      `physicalChapterId=${input.physicalChapterId}`,
+      `segmentIndex=${input.segmentIndex}`,
+      `segmentCount=${input.segmentCount}`,
+      `startPage=${input.startPage}`,
+      `endPage=${input.endPage}`,
+      `fetchedPageCount=${input.fetchedPageCount}`,
+      `fetchConcurrency=${input.fetchConcurrency}`,
+      `fetchDurationMs=${input.fetchDurationMs}`,
+      `transformDurationMs=${input.transformDurationMs}`,
+      `sourceHtmlBytes=${input.sourceHtmlBytes}`,
+      `finalHtmlBytes=${input.finalHtmlBytes}`,
+      `sourceVisibleTextCharacters=${input.sourceVisibleTextCharacters}`,
+      `finalVisibleTextCharacters=${input.finalVisibleTextCharacters}`,
+      `uniqueStylesheetCount=${input.uniqueStylesheetCount}`,
+      `duplicateStylesheetCount=${input.duplicateStylesheetCount}`,
+      `insertedSpineBreakCount=${input.insertedSpineBreakCount}`,
+      `injectedTitleCount=${input.injectedTitleCount}`,
+      `omittedImageCount=${input.omittedImageCount}`,
+      `sizeLimitHit=${input.sizeLimitHit}`,
+      `semanticFallbackUsed=${input.semanticFallbackUsed}`,
+      `plainTextFallbackUsed=${input.plainTextFallbackUsed}`,
+    ].join(" "),
   );
 }
 

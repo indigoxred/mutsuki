@@ -313,6 +313,105 @@ test("default Physical Books mode preserves decimal volumes and one Paperback en
   }
 });
 
+test("Physical Books mode automatically splits oversized EPUBs into reading parts", async () => {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (message?: unknown) => {
+    logs.push(String(message));
+  };
+  try {
+    installApplicationStub({
+      settings: { debugLogging: true, targetSourcePagesPerPart: 96 },
+      scheduleRequest: async (request) => {
+        const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/api/Series/7") {
+          return jsonResponse({
+            id: 7,
+            name: "Synthetic Omnibus",
+            format: 3,
+            libraryName: "Light Novels",
+          });
+        }
+        if (request.method === "GET" && url.pathname === "/api/Series/volumes") {
+          return jsonResponse([
+            {
+              number: "1",
+              chapters: [{ id: 777, title: "Synthetic Omnibus Volume 1", pages: 300 }],
+            },
+          ]);
+        }
+        if (request.method === "GET" && url.pathname === "/api/Book/777/book-info") {
+          return jsonResponse({
+            volumeId: 1777,
+            volumeNumber: "1",
+            bookTitle: "Synthetic Omnibus Volume 1",
+            pages: 300,
+          });
+        }
+        if (request.method === "GET" && url.pathname === "/api/Book/777/chapters") {
+          return jsonResponse([
+            { title: "Overview", page: 0 },
+            {
+              title: "Book 1: First Arc",
+              page: 4,
+              children: [
+                { title: "Chapter 1", page: 4 },
+                { title: "Chapter 2", page: 80 },
+                { title: "Chapter 3", page: 140 },
+              ],
+            },
+            {
+              title: "Book 2: Second Arc",
+              page: 180,
+              children: [
+                { title: "Chapter 4", page: 180 },
+                { title: "Chapter 5", page: 240 },
+              ],
+            },
+          ]);
+        }
+        throw new Error(`Unexpected request ${request.method} ${url.pathname}`);
+      },
+    });
+
+    const chapters = await new MutsukiKavitaExtension().getChapters(
+      series({ contentType: "comic" }),
+    );
+
+    assert.equal(chapters.length > 1, true);
+    assert.equal(
+      chapters.some((chapter) => chapter.additionalInfo?.startPage === "0"),
+      true,
+    );
+    assert.equal(
+      chapters.every((chapter) => chapter.additionalInfo?.listingMode === "physical-books"),
+      true,
+    );
+    assert.deepEqual(
+      chapters.map((chapter) => chapter.sortingIndex),
+      Array.from({ length: chapters.length }, (_unused, index) => index),
+    );
+    assert.deepEqual(
+      chapters.map((chapter) => chapter.chapNum),
+      Array.from({ length: chapters.length }, (_unused, index) => index + 1),
+    );
+    assert.equal(
+      chapters.filter((chapter) => chapter.additionalInfo?.isLastInVolume === "true").length,
+      1,
+    );
+    assert.equal(chapters.at(-1)?.additionalInfo?.isLastInVolume, "true");
+    assert.match(chapters[1]?.chapterId ?? "", /^kavita-book:777:segment:v1:/u);
+    assert.match(chapters.map((chapter) => chapter.title).join("\n"), /Book 1: First Arc/u);
+
+    const planLine = logs.find((line) => line.startsWith("[MutsukiNovelPlan]")) ?? "";
+    assert.match(planLine, /autoSplitTriggered=true/u);
+    assert.match(planLine, /segmentCount=\d+/u);
+    assert.equal(planLine.includes("secret-key"), false);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
 test("Internal EPUB Chapters mode filters publisher extras and keeps source-order projection", async () => {
   const logs: string[] = [];
   const originalLog = console.log;

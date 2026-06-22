@@ -23,11 +23,13 @@ import { MUTSUKI_KAVITA_BUILD } from "./build-info.js";
 import { KavitaClient, type KavitaTransport } from "./client.js";
 import { getKavitaDiscoverItems, getKavitaDiscoverSections } from "./discovery.js";
 import { getKavitaSettings, KavitaSettingsForm } from "./settings.js";
+import { largeEpubHandlingDiagnosticName } from "./large-epub-handling.js";
 import { kavitaSeriesIdFromMangaId, sourceMangaFromKavitaSeries } from "./metadata.js";
 import { getKavitaImageChapterDetails, mapKavitaMangaChapters } from "./manga-reader.js";
 import { getNovelChapterDetails, getNovelChaptersFromBook } from "./novel-reader.js";
 import { novelListingModeDiagnosticName } from "./novel-listing-mode.js";
-import type { NovelPhysicalBook } from "./models.js";
+import type { KavitaTocItem, NovelPhysicalBook, NovelReadingUnit } from "./models.js";
+import { planNovelReadingUnits, type NovelReadingPlan } from "./novel-segments.js";
 import { buildWholeBookChapterId, summarizeNovelToc } from "./toc.js";
 import {
   compareNovelPhysicalBooks,
@@ -113,7 +115,7 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
       const novelSourceManga = correctedNovelSourceManga(sourceManga, serverSourceManga);
       const physicalBooks = await Promise.all(
         chapters.map(async (chapter, index): Promise<NovelPhysicalBook> => {
-          const bookInfo = await client.getBookInfo(chapter.id);
+          const bookInfo = await cachedBookInfo(client, chapter.id);
           const info =
             typeof bookInfo === "object" && bookInfo !== null
               ? (bookInfo as Record<string, unknown>)
@@ -144,20 +146,51 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
       if (settings.novelListingMode === "physical-books") {
         const physicalChapters: Chapter[] = [];
         for (const book of sortedBooks) {
-          const tocSummary = await maybeSummarizeNovelBook({
-            client,
-            book,
-            includePublisherExtras: settings.includePublisherExtras,
+          const toc = await cachedBookToc(client, book.kavitaChapterId);
+          const plan = planNovelReadingUnits({
+            physicalChapterId: book.kavitaChapterId,
+            physicalVolumeId: book.kavitaVolumeId,
+            physicalVolumeNumber: book.resolvedVolume.value,
+            title: book.title,
+            totalPages: book.pageCount,
+            toc,
+            largeBookHandling: settings.largeEpubHandling,
+            targetPagesPerPart: settings.targetSourcePagesPerPart,
+          });
+          logNovelPlan({
+            plan,
+            listingMode: settings.novelListingMode,
             debugLogging: settings.debugLogging,
           });
-          const chapter = physicalBookToPaperback({
-            sourceManga: novelSourceManga,
-            kavitaSeriesId: seriesId,
-            book,
-            seriesTitle: serverSourceManga.mangaInfo.primaryTitle,
-            sortingIndex: physicalChapters.length,
+          const tocSummary = summarizeNovelToc({
+            toc,
+            totalPages: book.pageCount,
+            includePublisherExtras: settings.includePublisherExtras,
           });
-          physicalChapters.push(chapter);
+
+          if (!plan.autoSplitTriggered && plan.units.length === 1) {
+            const chapter = physicalBookToPaperback({
+              sourceManga: novelSourceManga,
+              kavitaSeriesId: seriesId,
+              book,
+              seriesTitle: serverSourceManga.mangaInfo.primaryTitle,
+              sortingIndex: physicalChapters.length,
+            });
+            physicalChapters.push(chapter);
+          } else {
+            for (const unit of plan.units) {
+              physicalChapters.push(
+                readingUnitToPaperback({
+                  sourceManga: novelSourceManga,
+                  kavitaSeriesId: seriesId,
+                  book,
+                  unit,
+                  sortingIndex: physicalChapters.length,
+                }),
+              );
+            }
+          }
+
           logNovelBook({
             book,
             listingMode: settings.novelListingMode,
@@ -170,11 +203,11 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
 
       const novelChapters: Chapter[] = [];
       for (const book of sortedBooks) {
-        const tocSummary = await maybeSummarizeNovelBook({
-          client,
-          book,
+        const toc = await cachedBookToc(client, book.kavitaChapterId);
+        const tocSummary = summarizeNovelToc({
+          toc,
+          totalPages: book.pageCount,
           includePublisherExtras: settings.includePublisherExtras,
-          debugLogging: settings.debugLogging,
         });
         const expanded = await getNovelChaptersFromBook({
           sourceManga: novelSourceManga,
@@ -186,6 +219,7 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
           fallbackTitle: book.title,
           totalPages: book.pageCount,
           includePublisherExtras: settings.includePublisherExtras,
+          toc,
         });
         for (const chapter of expanded) {
           const projected = { ...chapter, sortingIndex: novelChapters.length };
@@ -326,22 +360,90 @@ function physicalBookToPaperback(input: {
   } as Chapter;
 }
 
-async function maybeSummarizeNovelBook(input: {
-  client: KavitaClient;
+function readingUnitToPaperback(input: {
+  sourceManga: SourceManga;
+  kavitaSeriesId: number;
   book: NovelPhysicalBook;
-  includePublisherExtras: boolean;
-  debugLogging: boolean;
-}): Promise<ReturnType<typeof summarizeNovelToc> | undefined> {
-  if (!input.debugLogging) return undefined;
-  try {
-    return summarizeNovelToc({
-      toc: await input.client.getBookChapters(input.book.kavitaChapterId),
-      totalPages: input.book.pageCount,
-      includePublisherExtras: input.includePublisherExtras,
-    });
-  } catch {
-    return undefined;
+  unit: NovelReadingUnit;
+  sortingIndex: number;
+}): Chapter {
+  return {
+    chapterId: input.unit.id,
+    sourceManga: input.sourceManga,
+    langCode: "en",
+    chapNum: input.sortingIndex + 1,
+    title: input.unit.title,
+    volume: input.book.resolvedVolume.value,
+    sortingIndex: input.sortingIndex,
+    additionalInfo: {
+      kavitaSeriesId: String(input.kavitaSeriesId),
+      kavitaVolumeId:
+        input.book.kavitaVolumeId === undefined ? "" : String(input.book.kavitaVolumeId),
+      kavitaChapterId: String(input.book.kavitaChapterId),
+      physicalVolumeNumber:
+        input.book.resolvedVolume.value === undefined
+          ? ""
+          : String(input.book.resolvedVolume.value),
+      startPage: String(input.unit.startPage),
+      endPage: String(input.unit.endPage),
+      segmentIndex: String(input.unit.segmentIndex),
+      segmentCount: String(input.unit.segmentCount),
+      isSpecial: String(input.unit.role !== "narrative"),
+      isLastInVolume: String(input.unit.isLastInPhysicalBook),
+      listingMode: "physical-books",
+      role: input.unit.role,
+      localChapterNumber: "1",
+      physicalBookNumber: String(input.sortingIndex + 1),
+      volumeResolutionSource: input.book.volumeResolutionSource,
+    },
+  } as Chapter;
+}
+
+const bookInfoCache = new Map<string, Promise<unknown>>();
+const bookTocCache = new Map<string, Promise<KavitaTocItem[]>>();
+const MAX_METADATA_CACHE_ENTRIES = 100;
+
+function cacheKey(client: KavitaClient, chapterId: number): string {
+  return `${client.baseUrl}|${chapterId}`;
+}
+
+function boundedSet<K, V>(map: Map<K, V>, key: K, value: V): V {
+  if (!map.has(key) && map.size >= MAX_METADATA_CACHE_ENTRIES) {
+    const firstKey = map.keys().next().value as K | undefined;
+    if (firstKey !== undefined) map.delete(firstKey);
   }
+  map.set(key, value);
+  return value;
+}
+
+function cachedBookInfo(client: KavitaClient, chapterId: number): Promise<unknown> {
+  const key = cacheKey(client, chapterId);
+  return (
+    bookInfoCache.get(key) ??
+    boundedSet(
+      bookInfoCache,
+      key,
+      client.getBookInfo(chapterId).catch((error) => {
+        bookInfoCache.delete(key);
+        throw error;
+      }),
+    )
+  );
+}
+
+function cachedBookToc(client: KavitaClient, chapterId: number): Promise<KavitaTocItem[]> {
+  const key = cacheKey(client, chapterId);
+  return (
+    bookTocCache.get(key) ??
+    boundedSet(
+      bookTocCache,
+      key,
+      client.getBookChapters(chapterId).catch((error) => {
+        bookTocCache.delete(key);
+        throw error;
+      }),
+    )
+  );
 }
 
 function logNovelBook(input: {
@@ -371,6 +473,30 @@ function logNovelBook(input: {
       `specialCount=${summary?.specialCount ?? 0}`,
       `narrativeCount=${summary?.narrativeCount ?? 0}`,
       `listingMode=${novelListingModeDiagnosticName(input.listingMode)}`,
+    ].join(" "),
+  );
+}
+
+function logNovelPlan(input: {
+  plan: NovelReadingPlan;
+  listingMode: "physical-books" | "internal-chapters";
+  debugLogging: boolean;
+}): void {
+  if (!input.debugLogging) return;
+  console.log(
+    [
+      "[MutsukiNovelPlan]",
+      `build=${MUTSUKI_KAVITA_BUILD}`,
+      `physicalChapterId=${input.plan.physicalChapterId}`,
+      `totalPages=${input.plan.totalPages}`,
+      `listingMode=${novelListingModeDiagnosticName(input.listingMode)}`,
+      `largeBookHandling=${largeEpubHandlingDiagnosticName(input.plan.largeBookHandling)}`,
+      `autoSplitTriggered=${input.plan.autoSplitTriggered}`,
+      `topLevelBoundaryCount=${input.plan.topLevelBoundaryCount}`,
+      `segmentCount=${input.plan.segmentCount}`,
+      `largestSegmentPageCount=${input.plan.largestSegmentPageCount}`,
+      `smallestSegmentPageCount=${input.plan.smallestSegmentPageCount}`,
+      `frontMatterSegmentCount=${input.plan.frontMatterSegmentCount}`,
     ].join(" "),
   );
 }

@@ -274,7 +274,53 @@ test("full EPUB does not hide non-trailing Kavita book-page 400 responses", asyn
     KavitaRequestError,
   );
 
-  assert.deepEqual(requestedPages, [0, 1]);
+  assert.equal(requestedPages.includes(1), true);
+  assert.equal(requestedPages.includes(3), false);
+});
+
+test("full EPUB fetches a segment with bounded concurrency while preserving page order", async () => {
+  const requestedPages: number[] = [];
+  let activeRequests = 0;
+  let maxActiveRequests = 0;
+
+  const details = await getNovelChapterDetails({
+    sourceManga: novelSourceManga(),
+    chapter: novelChapter({ startPage: 10, endPage: 105 }),
+    client: {
+      async getBookInfo() {
+        return { pages: 200 };
+      },
+      async getBookPage(_chapterId: number, page: number) {
+        requestedPages.push(page);
+        activeRequests += 1;
+        maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+        await new Promise((resolve) => setTimeout(resolve, (page % 4) + 1));
+        activeRequests -= 1;
+        return `<body><h2>Page ${page}</h2><p>Text ${page}</p></body>`;
+      },
+      async getBookResource() {
+        throw new Error("no resources should be requested for this fixture");
+      },
+    } as unknown as KavitaClient,
+    renderingMode: "full-epub",
+    maxResourceBytes: 1_000,
+    maxChapterBytes: 200_000,
+    debugLogging: false,
+    build: "0.1.8+test",
+    incomingContentType: "novel",
+    resolvedContentType: "novel",
+    kavitaFormat: "epub",
+  });
+
+  assert.equal(maxActiveRequests <= 4, true);
+  assert.deepEqual(
+    requestedPages.toSorted((a, b) => a - b),
+    Array.from({ length: 96 }, (_unused, index) => index + 10),
+  );
+  assert.equal(requestedPages.includes(9), false);
+  assert.equal(requestedPages.includes(106), false);
+  const html = (details as { html: string }).html;
+  assert.ok(html.indexOf("Text 10") < html.indexOf("Text 105"));
 });
 
 test("full EPUB details inline authenticated Kavita resources without leaking API keys", async () => {
@@ -458,7 +504,7 @@ test("full EPUB keeps all fitting illustrations below the completed chapter limi
   parseStrictXhtml(details.html);
 });
 
-test("full EPUB falls back to complete plain text when semantic markup cannot fit", async () => {
+test("full EPUB never collapses oversized semantic source into one single plain-text paragraph", async () => {
   const text = repeatedText(6_000);
   const details = await getNovelChapterDetails({
     sourceManga: novelSourceManga(),
@@ -487,7 +533,8 @@ test("full EPUB falls back to complete plain text when semantic markup cannot fi
   assert.equal(details.type, "html");
   assert.equal("pages" in details, false);
   assert.ok(details.html.startsWith('<html xmlns="http://www.w3.org/1999/xhtml">'));
-  assert.ok(visibleText(details.html).length >= text.length);
+  assert.match(details.html, /mutsuki-epub-too-large/u);
+  assert.equal((details.html.match(/<p>/gu) ?? []).length <= 1, false);
   assert.equal(details.html.includes("Chapter exceeded configured HTML size limit"), false);
   assert.equal(details.html.includes("secret-key"), false);
   parseStrictXhtml(details.html);

@@ -65,6 +65,21 @@ export interface NovelPhysicalBook {
   chapter: { title?: string; volumeNumber?: string };
 }
 
+export interface NovelReadingUnit {
+  id: string;
+  physicalChapterId: number;
+  physicalVolumeId?: number;
+  physicalVolumeNumber?: number;
+  startPage: number;
+  endPage: number;
+  segmentIndex: number;
+  segmentCount: number;
+  title: string;
+  role: "frontmatter" | "narrative" | "special";
+  isLastInPhysicalBook: boolean;
+  sourceTocPath: string[];
+}
+
 export interface KavitaBookInfo {
   chapterNumber?: string;
   volumeNumber?: string;

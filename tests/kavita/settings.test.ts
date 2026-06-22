@@ -13,6 +13,11 @@ test("novel listing mode defaults to physical Kavita books", () => {
   assert.equal(DEFAULT_KAVITA_SETTINGS.includePublisherExtras, false);
 });
 
+test("large EPUB handling defaults to automatic bounded splitting", () => {
+  assert.equal(DEFAULT_KAVITA_SETTINGS.largeEpubHandling, "auto-split");
+  assert.equal(DEFAULT_KAVITA_SETTINGS.targetSourcePagesPerPart, 96);
+});
+
 test("settings test connection probes the current account endpoint", async () => {
   const requests: KavitaRequest[] = [];
   installApplicationStub({
