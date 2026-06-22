@@ -296,7 +296,7 @@ function physicalBookToPaperback(input: {
     chapterId,
     sourceManga: input.sourceManga,
     langCode: "en",
-    chapNum: 1,
+    chapNum: input.sortingIndex + 1,
     title: normalizePhysicalBookTitle({
       seriesTitle: input.seriesTitle,
       bookTitle: input.book.title,
@@ -316,6 +316,7 @@ function physicalBookToPaperback(input: {
       listingMode: "physical-books",
       role: "physical-book",
       localChapterNumber: "1",
+      physicalBookNumber: String(input.sortingIndex + 1),
       volumeResolutionSource: input.book.volumeResolutionSource,
       physicalVolumeNumber:
         input.book.resolvedVolume.value === undefined

@@ -139,7 +139,7 @@ function stringValue(value: unknown): string | undefined {
 }
 
 function normalizeComparableTitle(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9.]+/gu, "");
+  return value.toLowerCase().replace(/[^a-z0-9]+/gu, "");
 }
 
 function formatVolumeForPattern(value: number): string {

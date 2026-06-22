@@ -1,7 +1,7 @@
 import type { Chapter, ChapterDetails, SourceManga } from "@paperback/types";
 
 import { assembleHtmlChapter } from "./html-assembler.js";
-import type { KavitaClient } from "./client.js";
+import { KavitaRequestError, type KavitaClient } from "./client.js";
 import { novelChapterToPaperback } from "./chapter-mapper.js";
 import {
   novelRenderingModeDiagnosticName,
@@ -184,7 +184,12 @@ export async function getNovelChapterDetails(input: {
 
   const pages: string[] = [];
   for (let page = startPage; page <= endPage; page += 1) {
-    pages.push(await input.client.getBookPage(kavitaChapterId, page));
+    try {
+      pages.push(await input.client.getBookPage(kavitaChapterId, page));
+    } catch (error) {
+      if (page === endPage && pages.length > 0 && isTrailingUnavailableBookPage(error)) break;
+      throw error;
+    }
   }
 
   const resourceCache: ResourceFetchCache = new Map();
@@ -546,6 +551,15 @@ function mergeResourceRewriteStats(
 
 function countUnresolvedNamespacePrefixes(html: string): number {
   return html.match(/\b(?:epub|xlink):[\w-]+/giu)?.length ?? 0;
+}
+
+function isTrailingUnavailableBookPage(error: unknown): boolean {
+  return (
+    error instanceof KavitaRequestError &&
+    error.status === 400 &&
+    /\/Book\/\d+\/book-page$/u.test(error.path) &&
+    /could not find the appropriate html for that page/iu.test(error.responseMessage)
+  );
 }
 
 function logNovelDiagnostic(input: {

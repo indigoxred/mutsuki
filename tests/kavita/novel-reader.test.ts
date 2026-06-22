@@ -4,7 +4,7 @@ import test from "node:test";
 import { ContentRating, type Chapter, type SourceManga } from "@paperback/types";
 import { SaxesParser } from "saxes";
 
-import type { KavitaClient } from "../../src/Kavita/client.js";
+import { KavitaRequestError, type KavitaClient } from "../../src/Kavita/client.js";
 import {
   getNovelChapterDetails,
   getNovelChaptersFromBook,
@@ -203,6 +203,78 @@ test("ten-page EPUB details never request page ten", async () => {
   });
 
   assert.deepEqual(requestedPages, [8, 9]);
+});
+
+test("full EPUB skips a trailing Kavita 400 when book-info overreports readable pages", async () => {
+  const requestedPages: number[] = [];
+
+  const details = await getNovelChapterDetails({
+    sourceManga: novelSourceManga(),
+    chapter: novelChapter({ startPage: 0, endPage: 2 }),
+    client: {
+      async getBookInfo() {
+        return { pages: 3 };
+      },
+      async getBookPage(_chapterId: number, page: number) {
+        requestedPages.push(page);
+        if (page === 2) throw missingBookPageError();
+        return `<p>Readable page ${page}</p>`;
+      },
+      async getBookResource() {
+        throw new Error("no resources should be requested for this fixture");
+      },
+    } as unknown as KavitaClient,
+    renderingMode: "full-epub",
+    maxResourceBytes: 1_000,
+    maxChapterBytes: 20_000,
+    debugLogging: false,
+    build: "0.1.7+test",
+    incomingContentType: "novel",
+    resolvedContentType: "novel",
+    kavitaFormat: "epub",
+  });
+
+  assert.deepEqual(requestedPages, [0, 1, 2]);
+  assert.equal(details.type, "html");
+  assert.match(details.html, /Readable page 0/u);
+  assert.match(details.html, /Readable page 1/u);
+  assert.equal(details.html.includes("Readable page 2"), false);
+  assert.equal("pages" in details, false);
+});
+
+test("full EPUB does not hide non-trailing Kavita book-page 400 responses", async () => {
+  const requestedPages: number[] = [];
+
+  await assert.rejects(
+    getNovelChapterDetails({
+      sourceManga: novelSourceManga(),
+      chapter: novelChapter({ startPage: 0, endPage: 2 }),
+      client: {
+        async getBookInfo() {
+          return { pages: 3 };
+        },
+        async getBookPage(_chapterId: number, page: number) {
+          requestedPages.push(page);
+          if (page === 1) throw missingBookPageError();
+          return `<p>Readable page ${page}</p>`;
+        },
+        async getBookResource() {
+          throw new Error("no resources should be requested for this fixture");
+        },
+      } as unknown as KavitaClient,
+      renderingMode: "full-epub",
+      maxResourceBytes: 1_000,
+      maxChapterBytes: 20_000,
+      debugLogging: false,
+      build: "0.1.7+test",
+      incomingContentType: "novel",
+      resolvedContentType: "novel",
+      kavitaFormat: "epub",
+    }),
+    KavitaRequestError,
+  );
+
+  assert.deepEqual(requestedPages, [0, 1]);
 });
 
 test("full EPUB details inline authenticated Kavita resources without leaking API keys", async () => {
@@ -507,4 +579,13 @@ function parseStrictXhtml(html: string): void {
   });
   parser.write(html).close();
   if (parseError) throw parseError;
+}
+
+function missingBookPageError(): KavitaRequestError {
+  return new KavitaRequestError({
+    status: 400,
+    path: "/Book/55/book-page",
+    retryClassification: "permanent",
+    responseMessage: "Could not find the appropriate html for that page",
+  });
 }

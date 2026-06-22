@@ -29,7 +29,7 @@ Mutsuki uses Kavita's REST API with the auth key header for browse and read requ
 
 Mutsuki Kavita has two novel listing modes.
 
-**Physical Books** is the default and recommended mode. It mirrors Kavita's Books list, returns one Paperback entry per physical EPUB, preserves decimal volumes such as `5.5` and `8.5`, and is the best fit for volume-only MAL tracking.
+**Physical Books** is the default and recommended mode. It mirrors Kavita's Books list, returns one Paperback entry per physical EPUB, preserves decimal volumes such as `5.5` and `8.5`, and is the best fit for volume-only MAL tracking. Paperback may use reading progress as a tie-breaker when every book has the same chapter number, so this mode uses a stable physical-book sequence as the Paperback chapter number while keeping the real Kavita volume in the `Vol.` field.
 
 **Internal EPUB Chapters** exposes the EPUB table of contents as individual Paperback chapters. It keeps local chapter numbers, filters publisher newsletters and advertisements by default, and returns source order with contiguous sorting indexes. Paperback's Chapter Number sort may interleave equal local chapter numbers from different volumes, so this mode is experimental when the app cannot honor source order.
 

@@ -93,6 +93,40 @@ test("chapter-number-first sorting interleaves local EPUB chapters across volume
   );
 });
 
+test("read progress can reorder tied physical-book chapters before volume tie-breakers", () => {
+  const tiedPhysicalBooks = [1, 2, 3, 4, 5].map((volume) => ({
+    volume,
+    chapNum: 1,
+    readProgressSortKey: volume === 4 ? 2 : volume === 3 ? 1 : 0,
+  }));
+
+  const progressBiasedSort = <
+    T extends { chapNum: number; readProgressSortKey: number; volume: number },
+  >(
+    chapters: T[],
+  ): T[] =>
+    [...chapters].sort(
+      (a, b) =>
+        a.chapNum - b.chapNum ||
+        b.readProgressSortKey - a.readProgressSortKey ||
+        a.volume - b.volume,
+    );
+
+  assert.deepEqual(
+    progressBiasedSort(tiedPhysicalBooks).map((chapter) => chapter.volume),
+    [4, 3, 1, 2, 5],
+  );
+
+  const uniquePhysicalBooks = tiedPhysicalBooks.map((chapter, index) => ({
+    ...chapter,
+    chapNum: index + 1,
+  }));
+  assert.deepEqual(
+    progressBiasedSort(uniquePhysicalBooks).map((chapter) => chapter.volume),
+    [1, 2, 3, 4, 5],
+  );
+});
+
 test("EPUB chapters derive sane volumes and global sorting across physical books", async () => {
   installApplicationStub({
     settings: { novelListingMode: "internal-chapters" },
@@ -218,7 +252,7 @@ test("default Physical Books mode preserves decimal volumes and one Paperback en
     );
     assert.deepEqual(
       chapters.map((chapter) => chapter.chapNum),
-      Array.from({ length: chapters.length }, () => 1),
+      Array.from({ length: chapters.length }, (_unused, index) => index + 1),
     );
     assert.deepEqual(
       chapters.map((chapter) => chapter.sortingIndex),
@@ -255,17 +289,17 @@ test("default Physical Books mode preserves decimal volumes and one Paperback en
 
     const baka105 = chapters.find((chapter) => chapter.chapterId === "kavita-book:900:whole:v1");
     assert.equal(baka105?.volume, 10.5);
-    assert.equal(baka105?.chapNum, 1);
+    assert.equal(baka105?.chapNum, 12);
     assert.equal(baka105?.title, "Baka to Tesuto to Syokanju:Volume10.5");
 
     const baka12 = chapters.find((chapter) => chapter.chapterId === "kavita-book:901:whole:v1");
     assert.equal(baka12?.volume, 12);
-    assert.equal(baka12?.chapNum, 1);
+    assert.equal(baka12?.chapNum, 13);
     assert.equal(baka12?.title, "Baka to Tesuto to Syokanju:Volume12");
 
     const miso = chapters.find((chapter) => chapter.chapterId === "kavita-book:902:whole:v1");
     assert.equal(miso?.volume, undefined);
-    assert.equal(miso?.chapNum, 1);
+    assert.equal(miso?.chapNum, 14);
     assert.equal(miso?.title, "(2005) In the Miso Soup");
 
     const bookLines = logs.filter((line) => line.startsWith("[MutsukiNovelBook]"));

@@ -169,7 +169,7 @@ export class KavitaSettingsForm extends Form {
           layout: "list",
           items: NOVEL_LISTING_MODE_OPTIONS,
           subtitle:
-            "Physical books mirrors Kavita. Internal chapters may interleave under Paperback's Chapter Number sort.",
+            "Physical books mirrors Kavita with stable book ordering. Internal chapters may interleave under Paperback's Chapter Number sort.",
           onValueChange: Application.Selector(
             this as KavitaSettingsForm,
             "handleNovelListingModeChange",
