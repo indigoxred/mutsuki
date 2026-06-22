@@ -4,7 +4,7 @@ export interface ReadingNumber {
 }
 
 const SPECIAL_TITLE_PATTERN =
-  /\b(prologue|epilogue|afterword|side\s*story|bonus|special|extra|interlude|insert|inserts|illustration|illustrations|color\s*illustration|color\s*illustrations|frontispiece|character\s*page|gallery)\b/iu;
+  /\b(prologue|epilogue|afterword|side\s*story|bonus|special|extra|interlude|insert|inserts|illustration|illustrations|color\s*illustration|color\s*illustrations|frontispiece|character\s*(?:page|profiles?)|dramatis\s+personae|gallery|map)\b/iu;
 
 export function parsePositiveInteger(input: string | number | undefined): number | undefined {
   if (input === undefined) return undefined;

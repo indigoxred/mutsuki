@@ -13,6 +13,12 @@ import {
 import { normalizeKavitaBaseUrl } from "../shared/url.js";
 import { KavitaClient, type KavitaTransport } from "./client.js";
 import {
+  DEFAULT_NOVEL_LISTING_MODE,
+  normalizeNovelListingMode,
+  NOVEL_LISTING_MODE_OPTIONS,
+  type NovelListingMode,
+} from "./novel-listing-mode.js";
+import {
   DEFAULT_NOVEL_RENDERING_MODE,
   normalizeNovelRenderingMode,
   NOVEL_RENDERING_MODE_OPTIONS,
@@ -31,6 +37,8 @@ export interface KavitaSettings {
   includeBookLibraries: boolean;
   htmlResourceSizeLimit: number;
   htmlChapterSizeLimit: number;
+  novelListingMode: NovelListingMode;
+  includePublisherExtras: boolean;
   novelRenderingMode: NovelRenderingMode;
   debugLogging: boolean;
 }
@@ -47,6 +55,8 @@ export const DEFAULT_KAVITA_SETTINGS: KavitaSettings = {
   includeBookLibraries: true,
   htmlResourceSizeLimit: 2_000_000,
   htmlChapterSizeLimit: 8_000_000,
+  novelListingMode: DEFAULT_NOVEL_LISTING_MODE,
+  includePublisherExtras: false,
   novelRenderingMode: DEFAULT_NOVEL_RENDERING_MODE,
   debugLogging: false,
 };
@@ -59,7 +69,9 @@ export function getKavitaSettings(): KavitaSettings {
   };
   return {
     ...settings,
+    novelListingMode: normalizeNovelListingMode(settings.novelListingMode),
     novelRenderingMode: normalizeNovelRenderingMode(settings.novelRenderingMode),
+    includePublisherExtras: Boolean(settings.includePublisherExtras),
   };
 }
 
@@ -149,6 +161,20 @@ export class KavitaSettingsForm extends Form {
         }),
       ]),
       Section({ id: "limits", header: "HTML Reader" }, [
+        SelectRow("novel-listing-mode", {
+          title: "Novel listing mode",
+          value: [this.settings.novelListingMode],
+          minItemCount: 1,
+          maxItemCount: 1,
+          layout: "list",
+          items: NOVEL_LISTING_MODE_OPTIONS,
+          subtitle:
+            "Physical books mirrors Kavita. Internal chapters may interleave under Paperback's Chapter Number sort.",
+          onValueChange: Application.Selector(
+            this as KavitaSettingsForm,
+            "handleNovelListingModeChange",
+          ),
+        }),
         SelectRow("novel-rendering-mode", {
           title: "Novel rendering mode",
           value: [this.settings.novelRenderingMode],
@@ -159,6 +185,14 @@ export class KavitaSettingsForm extends Form {
           onValueChange: Application.Selector(
             this as KavitaSettingsForm,
             "handleNovelRenderingModeChange",
+          ),
+        }),
+        ToggleRow("include-publisher-extras", {
+          title: "Include publisher extras",
+          value: this.settings.includePublisherExtras,
+          onValueChange: Application.Selector(
+            this as KavitaSettingsForm,
+            "handleIncludePublisherExtrasChange",
           ),
         }),
         StepperRow("resource-limit", {
@@ -246,6 +280,14 @@ export class KavitaSettingsForm extends Form {
 
   async handleNovelRenderingModeChange(value: string[]): Promise<void> {
     this.update({ novelRenderingMode: normalizeNovelRenderingMode(value[0]) });
+  }
+
+  async handleNovelListingModeChange(value: string[]): Promise<void> {
+    this.update({ novelListingMode: normalizeNovelListingMode(value[0]) });
+  }
+
+  async handleIncludePublisherExtrasChange(value: boolean): Promise<void> {
+    this.update({ includePublisherExtras: value });
   }
 
   async handleDebugLoggingChange(value: boolean): Promise<void> {

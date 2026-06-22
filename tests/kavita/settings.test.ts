@@ -8,6 +8,11 @@ test("novel rendering mode defaults to full EPUB rendering", () => {
   assert.equal(DEFAULT_KAVITA_SETTINGS.novelRenderingMode, "full-epub");
 });
 
+test("novel listing mode defaults to physical Kavita books", () => {
+  assert.equal(DEFAULT_KAVITA_SETTINGS.novelListingMode, "physical-books");
+  assert.equal(DEFAULT_KAVITA_SETTINGS.includePublisherExtras, false);
+});
+
 test("settings test connection probes the current account endpoint", async () => {
   const requests: KavitaRequest[] = [];
   installApplicationStub({

@@ -25,6 +25,16 @@ DRM-protected EPUBs, EPUB JavaScript execution, PDF text reflow, a standalone ba
 
 Mutsuki uses Kavita's REST API with the auth key header for browse and read requests. It does not browse through OPDS feeds. Mutsuki preserves HTTP when a local server is explicitly configured as HTTP. API keys are stored in Paperback secure state and are redacted from logs and errors.
 
+### EPUB Novel Listing
+
+Mutsuki Kavita has two novel listing modes.
+
+**Physical Books** is the default and recommended mode. It mirrors Kavita's Books list, returns one Paperback entry per physical EPUB, preserves decimal volumes such as `5.5` and `8.5`, and is the best fit for volume-only MAL tracking.
+
+**Internal EPUB Chapters** exposes the EPUB table of contents as individual Paperback chapters. It keeps local chapter numbers, filters publisher newsletters and advertisements by default, and returns source order with contiguous sorting indexes. Paperback's Chapter Number sort may interleave equal local chapter numbers from different volumes, so this mode is experimental when the app cannot honor source order.
+
+The `Include publisher extras` setting can expose publisher backmatter as special entries. It is disabled by default so rows such as newsletters, publisher advertisements, and club/about pages do not appear as normal story chapters.
+
 ## MyAnimeList Setup
 
 1. Install the `Mutsuki MyAnimeList` tracker extension.

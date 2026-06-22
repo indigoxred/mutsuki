@@ -35,6 +35,8 @@ export interface KavitaChapterDto {
   title?: string;
   chapterNumber?: string;
   volumeNumber?: string;
+  sourceVolumeIndex?: number;
+  sourceChapterIndex?: number;
   pages: number;
   isSpecial?: boolean;
   publishDate?: string;
@@ -100,6 +102,7 @@ export function novelChapterToPaperback(input: {
     physicalChapterId: input.logicalChapter.kavitaChapterId,
     startPage: input.logicalChapter.startPage,
     endPage: input.logicalChapter.endPage,
+    part: input.logicalChapter.part,
     isLastInVolume: input.logicalChapter.isLastInVolume,
   });
 
@@ -121,7 +124,14 @@ export function novelChapterToPaperback(input: {
       endPage: String(input.logicalChapter.endPage),
       isSpecial: String(input.logicalChapter.isSpecial),
       isLastInVolume: String(input.logicalChapter.isLastInVolume),
+      listingMode: "internal-chapters",
+      role: input.logicalChapter.role,
+      localChapterNumber: String(input.logicalChapter.chapterNumber),
       structuralTocEntriesFiltered: String(input.logicalChapter.structuralTocEntriesFiltered ?? 0),
+      publisherTocEntriesFiltered: String(input.logicalChapter.publisherTocEntriesFiltered ?? 0),
+      frontmatterTocEntries: String(input.logicalChapter.frontmatterTocEntries ?? 0),
+      readableSpecialTocEntries: String(input.logicalChapter.readableSpecialTocEntries ?? 0),
+      narrativeTocEntries: String(input.logicalChapter.narrativeTocEntries ?? 0),
       parsedWordChapterNumberCount: String(input.logicalChapter.parsedWordChapterNumberCount ?? 0),
     },
     sortingIndex: input.sortingIndex,

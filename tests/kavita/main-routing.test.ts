@@ -57,12 +57,45 @@ test("server EPUB metadata routes chapters as novels when incoming content type 
   const chapters = await new MutsukiKavitaExtension().getChapters(series({ contentType: "comic" }));
 
   assert.equal(chapters.length, 1);
-  assert.equal(chapters[0]?.chapterId.startsWith("kavita-book:"), true);
+  assert.equal(chapters[0]?.chapterId, "kavita-book:55:whole:v1");
+  assert.equal(chapters[0]?.chapNum, 1);
+  assert.equal(chapters[0]?.additionalInfo?.listingMode, "physical-books");
+  assert.equal(chapters[0]?.additionalInfo?.isLastInVolume, "true");
   assert.equal(chapters[0]?.sourceManga.mangaInfo.contentType, "novel");
+});
+
+test("chapter-number-first sorting interleaves local EPUB chapters across volumes", () => {
+  const splitChapters = [1, 2, 3].flatMap((volume) =>
+    [1, 2, 3, 4, 5].map((chapNum, index) => ({
+      volume,
+      chapNum,
+      sortingIndex: (volume - 1) * 5 + index,
+    })),
+  );
+
+  const chapterNumberFirst = [...splitChapters].sort(
+    (a, b) => b.chapNum - a.chapNum || a.sortingIndex - b.sortingIndex,
+  );
+
+  assert.deepEqual(
+    chapterNumberFirst.slice(0, 6).map((chapter) => ({
+      volume: chapter.volume,
+      chapNum: chapter.chapNum,
+    })),
+    [
+      { volume: 1, chapNum: 5 },
+      { volume: 2, chapNum: 5 },
+      { volume: 3, chapNum: 5 },
+      { volume: 1, chapNum: 4 },
+      { volume: 2, chapNum: 4 },
+      { volume: 3, chapNum: 4 },
+    ],
+  );
 });
 
 test("EPUB chapters derive sane volumes and global sorting across physical books", async () => {
   installApplicationStub({
+    settings: { novelListingMode: "internal-chapters" },
     scheduleRequest: async (request) => {
       const url = new URL(request.url);
       if (request.method === "GET" && url.pathname === "/api/Series/7") {
@@ -136,7 +169,7 @@ test("EPUB chapters derive sane volumes and global sorting across physical books
     [
       {
         chapNum: 1,
-        title: "CHAPTER ONE HITAGI CRAB",
+        title: "HITAGI CRAB",
         volume: 1,
         sortingIndex: 0,
         startPage: "6",
@@ -144,7 +177,7 @@ test("EPUB chapters derive sane volumes and global sorting across physical books
       },
       {
         chapNum: 2,
-        title: "CHAPTER TWO MAYOI SNAIL",
+        title: "MAYOI SNAIL",
         volume: 1,
         sortingIndex: 1,
         startPage: "17",
@@ -152,7 +185,7 @@ test("EPUB chapters derive sane volumes and global sorting across physical books
       },
       {
         chapNum: 5,
-        title: "CHAPTER FIVE TSUBASA CAT",
+        title: "TSUBASA CAT",
         volume: 3,
         sortingIndex: 2,
         startPage: "6",
@@ -162,7 +195,7 @@ test("EPUB chapters derive sane volumes and global sorting across physical books
   );
 });
 
-test("EPUB physical books preserve decimal volumes, whole-book names, inserts, and global order", async () => {
+test("default Physical Books mode preserves decimal volumes and one Paperback entry per Kavita book", async () => {
   const logs: string[] = [];
   const originalLog = console.log;
   console.log = (message?: unknown) => {
@@ -178,15 +211,98 @@ test("EPUB physical books preserve decimal volumes, whole-book names, inserts, a
       series({ contentType: "comic" }),
     );
 
+    assert.equal(chapters.length, 14);
     assert.deepEqual(
-      unique(chapters.map((chapter) => chapter.volume).filter((volume) => volume !== undefined)),
-      [1, 2, 3, 4, 5, 5.5, 6, 7, 8, 8.5, 9, 10.5, 12],
+      chapters.map((chapter) => chapter.volume),
+      [1, 2, 3, 4, 5, 5.5, 6, 7, 8, 8.5, 9, 10.5, 12, undefined],
+    );
+    assert.deepEqual(
+      chapters.map((chapter) => chapter.chapNum),
+      Array.from({ length: chapters.length }, () => 1),
     );
     assert.deepEqual(
       chapters.map((chapter) => chapter.sortingIndex),
       Array.from({ length: chapters.length }, (_unused, index) => index),
     );
     assert.equal(new Set(chapters.map((chapter) => chapter.chapterId)).size, chapters.length);
+    assert.deepEqual(
+      chapters.map((chapter) => chapter.chapterId),
+      [
+        "kavita-book:800:whole:v1",
+        "kavita-book:801:whole:v1",
+        "kavita-book:802:whole:v1",
+        "kavita-book:803:whole:v1",
+        "kavita-book:804:whole:v1",
+        "kavita-book:805:whole:v1",
+        "kavita-book:806:whole:v1",
+        "kavita-book:809:whole:v1",
+        "kavita-book:807:whole:v1",
+        "kavita-book:808:whole:v1",
+        "kavita-book:810:whole:v1",
+        "kavita-book:900:whole:v1",
+        "kavita-book:901:whole:v1",
+        "kavita-book:902:whole:v1",
+      ],
+    );
+    assert.deepEqual(
+      chapters.map((chapter) => chapter.additionalInfo?.listingMode),
+      Array.from({ length: chapters.length }, () => "physical-books"),
+    );
+    assert.deepEqual(
+      chapters.map((chapter) => chapter.additionalInfo?.isLastInVolume),
+      Array.from({ length: chapters.length }, () => "true"),
+    );
+
+    const baka105 = chapters.find((chapter) => chapter.chapterId === "kavita-book:900:whole:v1");
+    assert.equal(baka105?.volume, 10.5);
+    assert.equal(baka105?.chapNum, 1);
+    assert.equal(baka105?.title, "Baka to Tesuto to Syokanju:Volume10.5");
+
+    const baka12 = chapters.find((chapter) => chapter.chapterId === "kavita-book:901:whole:v1");
+    assert.equal(baka12?.volume, 12);
+    assert.equal(baka12?.chapNum, 1);
+    assert.equal(baka12?.title, "Baka to Tesuto to Syokanju:Volume12");
+
+    const miso = chapters.find((chapter) => chapter.chapterId === "kavita-book:902:whole:v1");
+    assert.equal(miso?.volume, undefined);
+    assert.equal(miso?.chapNum, 1);
+    assert.equal(miso?.title, "(2005) In the Miso Soup");
+
+    const bookLines = logs.filter((line) => line.startsWith("[MutsukiNovelBook]"));
+    assert.equal(bookLines.length, 14);
+    assert.ok(bookLines.some((line) => /resolvedVolume=5\.5/u.test(line)));
+    assert.ok(bookLines.some((line) => /resolvedVolume=8\.5/u.test(line)));
+    assert.ok(bookLines.every((line) => /listingMode=physical-books/u.test(line)));
+    assert.ok(bookLines.every((line) => !line.includes("secret-key")));
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test("Internal EPUB Chapters mode filters publisher extras and keeps source-order projection", async () => {
+  const logs: string[] = [];
+  const originalLog = console.log;
+  console.log = (message?: unknown) => {
+    logs.push(String(message));
+  };
+  try {
+    installApplicationStub({
+      settings: { debugLogging: true, novelListingMode: "internal-chapters" },
+      scheduleRequest: angelAndBakaScheduleRequest,
+    });
+
+    const chapters = await new MutsukiKavitaExtension().getChapters(
+      series({ contentType: "comic" }),
+    );
+
+    assert.equal(
+      chapters.some((chapter) => chapter.title === "Yen Newsletter"),
+      false,
+    );
+    assert.deepEqual(
+      chapters.map((chapter) => chapter.sortingIndex),
+      Array.from({ length: chapters.length }, (_unused, index) => index),
+    );
 
     const aroundFive = chapters.filter((chapter) => [5, 5.5, 6].includes(chapter.volume ?? -1));
     assert.deepEqual(
@@ -194,65 +310,57 @@ test("EPUB physical books preserve decimal volumes, whole-book names, inserts, a
         volume: chapter.volume,
         chapNum: chapter.chapNum,
         title: chapter.title,
+        role: chapter.additionalInfo?.role,
+        localChapterNumber: chapter.additionalInfo?.localChapterNumber,
         isSpecial: chapter.additionalInfo?.isSpecial,
       })),
       [
-        { volume: 5, chapNum: 0, title: "Insert", isSpecial: "true" },
+        {
+          volume: 5,
+          chapNum: 0,
+          title: "Insert",
+          role: "frontmatter",
+          localChapterNumber: "0",
+          isSpecial: "true",
+        },
         {
           volume: 5,
           chapNum: 1,
-          title: "Chapter 1: The Day After the Confession",
+          title: "The Day After the Confession",
+          role: "narrative",
+          localChapterNumber: "1",
           isSpecial: "false",
         },
-        { volume: 5.5, chapNum: 0, title: "Insert", isSpecial: "true" },
-        { volume: 6, chapNum: 0, title: "Insert", isSpecial: "true" },
-        { volume: 6, chapNum: 1, title: "Chapter 1: Volume 6", isSpecial: "false" },
-      ],
-    );
-
-    const aroundEight = chapters.filter((chapter) => [8, 8.5, 9].includes(chapter.volume ?? -1));
-    assert.deepEqual(
-      aroundEight.map((chapter) => ({
-        volume: chapter.volume,
-        chapNum: chapter.chapNum,
-        title: chapter.title,
-        isSpecial: chapter.additionalInfo?.isSpecial,
-      })),
-      [
-        { volume: 8, chapNum: 0, title: "Insert", isSpecial: "true" },
         {
-          volume: 8,
+          volume: 5.5,
+          chapNum: 0,
+          title: "Insert",
+          role: "frontmatter",
+          localChapterNumber: "0",
+          isSpecial: "true",
+        },
+        {
+          volume: 6,
+          chapNum: 0,
+          title: "Insert",
+          role: "frontmatter",
+          localChapterNumber: "0",
+          isSpecial: "true",
+        },
+        {
+          volume: 6,
           chapNum: 1,
-          title: "Chapter 1: An Important Promise with the Angel",
+          title: "Volume 6",
+          role: "narrative",
+          localChapterNumber: "1",
           isSpecial: "false",
         },
-        { volume: 8.5, chapNum: 0, title: "Insert", isSpecial: "true" },
-        { volume: 9, chapNum: 0, title: "Insert", isSpecial: "true" },
-        { volume: 9, chapNum: 1, title: "Chapter 1: Volume 9", isSpecial: "false" },
       ],
     );
 
-    const baka105 = chapters.find(
-      (chapter) => chapter.title === "Baka to Tesuto to Syokanju:Volume10.5",
-    );
-    assert.equal(baka105?.volume, 10.5);
-    assert.equal(baka105?.chapNum, 1);
-
-    const baka12 = chapters.find(
-      (chapter) => chapter.title === "Baka to Tesuto to Syokanju:Volume12",
-    );
-    assert.equal(baka12?.volume, 12);
-    assert.equal(baka12?.chapNum, 1);
-
-    const miso = chapters.find((chapter) => chapter.title === "(2005) In the Miso Soup");
-    assert.equal(miso?.volume, undefined);
-    assert.equal(miso?.chapNum, 1);
-
-    const orderLines = logs.filter((line) => line.startsWith("[MutsukiNovelOrder]"));
-    assert.equal(orderLines.length, 14);
-    assert.ok(orderLines.some((line) => /resolvedVolume=5\.5/u.test(line)));
-    assert.ok(orderLines.some((line) => /resolvedVolume=8\.5/u.test(line)));
-    assert.ok(orderLines.every((line) => !line.includes("secret-key")));
+    const projectionLines = logs.filter((line) => line.startsWith("[MutsukiNovelProjection]"));
+    assert.ok(projectionLines.length > 0);
+    assert.ok(projectionLines.every((line) => !line.includes("secret-key")));
   } finally {
     console.log = originalLog;
   }
@@ -433,16 +541,13 @@ function tocFor(id: number): unknown[] {
       title: titles[id] ?? `Chapter 1: Volume ${parseTitleVolume(bookInfoFor(id).bookTitle)}`,
       page: 4,
     },
+    { title: "Yen Newsletter", page: 10 },
   ];
 }
 
 function parseTitleVolume(title: unknown): string {
   const match = /Volume\s*(\d+(?:\.\d+)?)/u.exec(String(title));
   return match?.[1] ?? "-100000";
-}
-
-function unique<T>(values: T[]): T[] {
-  return [...new Set(values)];
 }
 
 function series(input: { contentType?: "comic" | "novel" }): SourceManga {

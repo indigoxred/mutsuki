@@ -1,13 +1,15 @@
 import type { KavitaChapterDto } from "./chapter-mapper.js";
 
 export function parseKavitaChapterDtos(payload: unknown): KavitaChapterDto[] {
-  return containers(payload).flatMap((container) => {
+  return containers(payload).flatMap((container, sourceVolumeIndex) => {
     const volumeNumber = stringValue(container.volumeNumber ?? container.number ?? container.name);
     const children = Array.isArray(container.chapters) ? container.chapters : undefined;
     if (children) {
-      return children.flatMap((chapter) => toChapterDto(chapter, volumeNumber));
+      return children.flatMap((chapter, sourceChapterIndex) =>
+        toChapterDto(chapter, volumeNumber, sourceVolumeIndex, sourceChapterIndex),
+      );
     }
-    return toChapterDto(container, volumeNumber);
+    return toChapterDto(container, volumeNumber, sourceVolumeIndex, 0);
   });
 }
 
@@ -18,7 +20,12 @@ function containers(payload: unknown): Record<string, unknown>[] {
   return [];
 }
 
-function toChapterDto(value: unknown, volumeNumber: string | undefined): KavitaChapterDto[] {
+function toChapterDto(
+  value: unknown,
+  volumeNumber: string | undefined,
+  sourceVolumeIndex: number,
+  sourceChapterIndex: number,
+): KavitaChapterDto[] {
   if (!isRecord(value)) return [];
   const id = numberValue(value.id ?? value.chapterId);
   if (id === undefined) return [];
@@ -31,6 +38,8 @@ function toChapterDto(value: unknown, volumeNumber: string | undefined): KavitaC
       ? undefined
       : stringValue(value.minNumber ?? value.chapterNumber ?? value.number ?? value.range),
     volumeNumber: stringValue(value.volumeNumber) ?? volumeNumber,
+    sourceVolumeIndex,
+    sourceChapterIndex,
     pages: numberValue(value.pages ?? value.pageCount) ?? 0,
     isSpecial,
   };

@@ -119,13 +119,14 @@ test("maps EPUB logical chapters to Paperback HTML chapters with final-volume ma
       chapterNumber: 2,
       volumeNumber: 1,
       isSpecial: false,
+      role: "narrative",
       isLastInVolume: true,
     },
     html: "<html></html>",
     sortingIndex: 2,
   });
 
-  assert.equal(chapter.chapter.chapterId, "kavita-book:55:page:5:end:7:last:1");
+  assert.equal(chapter.chapter.chapterId, "kavita-book:55:toc:v1:page:5:end:7:last:1");
   assert.equal(chapter.chapter.additionalInfo?.isLastInVolume, "true");
   assert.equal(chapter.details.type, "html");
 });

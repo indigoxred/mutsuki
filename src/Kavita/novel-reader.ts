@@ -43,6 +43,7 @@ export async function getNovelChaptersFromBook(input: {
   volumeNumber?: number;
   fallbackTitle?: string;
   totalPages: number;
+  includePublisherExtras?: boolean;
 }): Promise<Chapter[]> {
   if (!Number.isFinite(input.totalPages) || input.totalPages < 1) return [];
 
@@ -54,6 +55,8 @@ export async function getNovelChaptersFromBook(input: {
     volumeNumber: input.volumeNumber,
     fallbackTitle: input.fallbackTitle,
     totalPages: input.totalPages,
+    includePublisherExtras: input.includePublisherExtras,
+    listingMode: "internal-chapters",
     toc,
   }).map(
     (logicalChapter, index) =>
