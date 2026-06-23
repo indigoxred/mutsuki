@@ -52,6 +52,8 @@ export interface KavitaSettings {
   targetSourcePagesPerPart: number;
   includePublisherExtras: boolean;
   novelRenderingMode: NovelRenderingMode;
+  progressBridgeUrl: string;
+  progressBridgeToken: string;
   debugLogging: boolean;
 }
 
@@ -72,6 +74,8 @@ export const DEFAULT_KAVITA_SETTINGS: KavitaSettings = {
   targetSourcePagesPerPart: DEFAULT_TARGET_SOURCE_PAGES_PER_PART,
   includePublisherExtras: false,
   novelRenderingMode: DEFAULT_NOVEL_RENDERING_MODE,
+  progressBridgeUrl: "",
+  progressBridgeToken: "",
   debugLogging: false,
 };
 
@@ -80,6 +84,8 @@ export function getKavitaSettings(): KavitaSettings {
     ...DEFAULT_KAVITA_SETTINGS,
     ...(Application.getState("kavitaSettings") as Partial<KavitaSettings> | undefined),
     apiKey: (Application.getSecureState("kavitaApiKey") as string | undefined) ?? "",
+    progressBridgeToken:
+      (Application.getSecureState("kavitaProgressBridgeToken") as string | undefined) ?? "",
   };
   return {
     ...settings,
@@ -92,9 +98,10 @@ export function getKavitaSettings(): KavitaSettings {
 }
 
 export function setKavitaSettings(settings: KavitaSettings): void {
-  const { apiKey: _apiKey, ...nonSecret } = settings;
+  const { apiKey: _apiKey, progressBridgeToken: _progressBridgeToken, ...nonSecret } = settings;
   Application.setState(nonSecret, "kavitaSettings");
   Application.setSecureState(settings.apiKey, "kavitaApiKey");
+  Application.setSecureState(settings.progressBridgeToken, "kavitaProgressBridgeToken");
 }
 
 export class KavitaSettingsForm extends Form {
@@ -273,6 +280,30 @@ export class KavitaSettingsForm extends Form {
           ),
         }),
       ]),
+      Section({ id: "progress-sync", header: "Progress Sync" }, [
+        LabelRow("progress-sync-note", {
+          title: "Kavita progress",
+          subtitle:
+            "Completed Paperback reads update Kavita. Optional bridge events can be sent to a local test receiver.",
+        }),
+        InputRow("progress-bridge-url", {
+          title: "Progress bridge URL",
+          value: this.settings.progressBridgeUrl,
+          onValueChange: Application.Selector(
+            this as KavitaSettingsForm,
+            "handleProgressBridgeUrlChange",
+          ),
+        }),
+        InputRow("progress-bridge-token", {
+          title: "Progress bridge token",
+          value: this.settings.progressBridgeToken,
+          isSecureEntry: true,
+          onValueChange: Application.Selector(
+            this as KavitaSettingsForm,
+            "handleProgressBridgeTokenChange",
+          ),
+        }),
+      ]),
     ];
   }
 
@@ -342,6 +373,14 @@ export class KavitaSettingsForm extends Form {
 
   async handleDebugLoggingChange(value: boolean): Promise<void> {
     this.update({ debugLogging: value });
+  }
+
+  async handleProgressBridgeUrlChange(value: string): Promise<void> {
+    this.update({ progressBridgeUrl: value.trim() });
+  }
+
+  async handleProgressBridgeTokenChange(value: string): Promise<void> {
+    this.update({ progressBridgeToken: value });
   }
 
   async handleTestConnection(): Promise<void> {

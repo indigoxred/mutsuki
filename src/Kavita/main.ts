@@ -7,16 +7,23 @@ import {
   type DiscoverSectionItem,
   type DiscoverSectionProviding,
   type Extension,
-  type Form,
+  Form,
+  type FormSectionElement,
+  LabelRow,
   type MangaProviding,
+  type MangaProgress,
+  type MangaProgressProviding,
   type Metadata,
   type PagedResults,
   type SearchQuery,
   type SearchResultItem,
   type SearchResultsProviding,
   type SettingsFormProviding,
+  Section,
   type SortingOption,
   type SourceManga,
+  type ChapterReadActionQueueProcessingResult,
+  type TrackedMangaChapterReadAction,
 } from "@paperback/types";
 
 import { MUTSUKI_KAVITA_BUILD } from "./build-info.js";
@@ -28,6 +35,8 @@ import { kavitaSeriesIdFromMangaId, sourceMangaFromKavitaSeries } from "./metada
 import { getKavitaImageChapterDetails, mapKavitaMangaChapters } from "./manga-reader.js";
 import { getNovelChapterDetails, getNovelChaptersFromBook } from "./novel-reader.js";
 import { novelListingModeDiagnosticName } from "./novel-listing-mode.js";
+import { sendProgressBridgeEvent, type ProgressBridgeTransport } from "./progress-bridge.js";
+import { processKavitaReadActionQueue } from "./progress.js";
 import type { KavitaTocItem, NovelPhysicalBook, NovelReadingUnit } from "./models.js";
 import { planNovelReadingUnits, type NovelReadingPlan } from "./novel-segments.js";
 import { buildWholeBookChapterId, summarizeNovelToc } from "./toc.js";
@@ -44,13 +53,50 @@ type KavitaImplementation = Extension &
   MangaProviding &
   ChapterProviding &
   DiscoverSectionProviding &
-  SettingsFormProviding;
+  SettingsFormProviding &
+  MangaProgressProviding;
 
 export class MutsukiKavitaExtension implements KavitaImplementation {
   async initialise(): Promise<void> {}
 
   async getSettingsForm(): Promise<Form> {
     return new KavitaSettingsForm();
+  }
+
+  async getMangaProgressManagementForm(sourceManga: SourceManga): Promise<Form> {
+    return new KavitaProgressForm(sourceManga);
+  }
+
+  async getMangaProgress(_sourceManga: SourceManga): Promise<MangaProgress | undefined> {
+    return undefined;
+  }
+
+  async processChapterReadActionQueue(
+    actions: TrackedMangaChapterReadAction[],
+  ): Promise<ChapterReadActionQueueProcessingResult> {
+    const settings = getKavitaSettings();
+    if (!settings.baseUrl || !settings.apiKey) {
+      return { successfulItems: [], failedItems: actions.map((action) => action.id) };
+    }
+    const client = this.client();
+    try {
+      return await processKavitaReadActionQueue({
+        actions,
+        markChapterRead: (mark) =>
+          client.markChapterRead({ seriesId: mark.seriesId, chapterId: mark.chapterId }),
+        sendBridgeEvent: settings.progressBridgeUrl
+          ? (event) =>
+              sendProgressBridgeEvent({
+                bridgeUrl: settings.progressBridgeUrl,
+                token: settings.progressBridgeToken || undefined,
+                event,
+                transport: progressBridgeTransport,
+              })
+          : undefined,
+      });
+    } catch {
+      return { successfulItems: [], failedItems: actions.map((action) => action.id) };
+    }
   }
 
   async getDiscoverSections(): Promise<DiscoverSection[]> {
@@ -301,6 +347,33 @@ const paperbackTransport: KavitaTransport = async (request) => {
     body: isText ? Application.arrayBufferToUTF8String(buffer) : buffer,
   };
 };
+
+const progressBridgeTransport: ProgressBridgeTransport = async (request) => {
+  const [response] = await Application.scheduleRequest(request);
+  return { status: response.status };
+};
+
+class KavitaProgressForm extends Form {
+  constructor(private readonly sourceManga: SourceManga) {
+    super();
+  }
+
+  override getSections(): FormSectionElement<unknown>[] {
+    return [
+      Section({ id: "kavita-progress", header: "Kavita Progress" }, [
+        LabelRow("summary", {
+          title: "Automatic Kavita updates",
+          subtitle:
+            "Completed reads from this source are queued by Paperback and marked read in Kavita. Configure the mock bridge URL in source settings to display received events.",
+        }),
+        LabelRow("series", {
+          title: "Paperback series id",
+          subtitle: this.sourceManga.mangaId,
+        }),
+      ]),
+    ];
+  }
+}
 
 export const Kavita = new MutsukiKavitaExtension();
 export const MutsukiKavita = Kavita;

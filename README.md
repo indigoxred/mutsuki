@@ -7,6 +7,10 @@ It contains two separately installable extensions:
 - **Mutsuki Kavita**: browse/search Kavita, read image-based manga/PDF pages, and render EPUB light novels as Paperback HTML chapters.
 - **Mutsuki MyAnimeList**: authenticate with MAL, link titles through Paperback's tracker workflow, and update chapter/volume progress without regressions.
 
+It also includes a development-only mock progress bridge at `apps/mock-progress-bridge`. The bridge
+receives read-progress events from Mutsuki Kavita so the Paperback progress hook can be tested before
+building the full Kavita-to-MyAnimeList sync service.
+
 ## Supported Formats
 
 - Manga archives/images through Kavita reader image endpoints.
@@ -55,12 +59,36 @@ Tracking modes:
 
 Offsets are supported in the policy model for mismatched Kavita/MAL numbering. Specials and decimal chapters are ignored by default. Volume progress advances only when Mutsuki knows the completed chapter is the final logical chapter in a volume.
 
+## Automatic Progress Sync Feasibility
+
+Mutsuki Kavita implements Paperback's progress-provider queue hook. Completed reads are mapped back
+to Kavita identifiers and marked read in Kavita. When a progress bridge URL is configured in Mutsuki
+Kavita settings, the source also posts a sanitized event to the mock bridge.
+
+Run the mock bridge:
+
+```bash
+pnpm run bridge:mock:build
+pnpm run bridge:mock:start
+```
+
+Or with Docker:
+
+```bash
+cd apps/mock-progress-bridge
+docker compose -f docker-compose.example.yml up --build
+```
+
+Open `http://localhost:8080` to view received events. The full architecture and next bridge phase are
+documented in `docs/progress-sync-architecture.md`.
+
 ## Development
 
 ```bash
 pnpm install
 pnpm run typecheck
 pnpm run test
+pnpm run bridge:mock:build
 pnpm run bundle
 pnpm run dev
 pnpm run verify

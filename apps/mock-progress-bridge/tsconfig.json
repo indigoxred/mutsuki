@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "rootDir": ".",
-    "outDir": "dist-tests",
+    "rootDir": "src",
+    "outDir": "dist",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2024",
@@ -12,5 +12,5 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src/**/*.ts", "apps/**/*.ts", "tests/**/*.ts"]
+  "include": ["src/**/*.ts"]
 }

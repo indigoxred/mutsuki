@@ -1,3 +1,3 @@
-export const MUTSUKI_KAVITA_VERSION = "0.1.8";
-export const MUTSUKI_KAVITA_SHORT_SHA = "46d71e2";
+export const MUTSUKI_KAVITA_VERSION = "0.1.9";
+export const MUTSUKI_KAVITA_SHORT_SHA = "progress-mock";
 export const MUTSUKI_KAVITA_BUILD = `${MUTSUKI_KAVITA_VERSION}+${MUTSUKI_KAVITA_SHORT_SHA}`;
