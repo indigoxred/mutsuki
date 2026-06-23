@@ -190,6 +190,23 @@ test("Kavita extension progress provider marks Kavita and posts bridge events", 
   assert.equal(JSON.stringify(bridgeBody).includes("secret-key"), false);
 });
 
+test("Kavita extension exposes active zero progress so Paperback can queue read actions", async () => {
+  installApplicationStub({
+    scheduleRequest: async () => {
+      throw new Error("zero progress marker should not request Kavita data");
+    },
+  });
+
+  const source = sourceManga();
+  const progress = await new MutsukiKavitaExtension().getMangaProgress(source);
+
+  assert.ok(progress);
+  assert.equal(progress.sourceManga, source);
+  assert.equal(progress.lastReadChapter.sourceManga, source);
+  assert.equal(progress.lastReadChapter.chapNum, 0);
+  assert.equal(progress.lastReadChapter.chapterId, "kavita-series:7:progress-start");
+});
+
 function action(input: {
   id: string;
   mangaId?: string;
@@ -233,6 +250,19 @@ function action(input: {
     chapterVolume: input.chapterVolume,
     creationDate: new Date("2026-06-23T00:00:00.000Z"),
     errorCount: 0,
+  };
+}
+
+function sourceManga(input: { mangaId?: string } = {}): SourceManga {
+  return {
+    mangaId: input.mangaId ?? "kavita-series:7",
+    mangaInfo: {
+      primaryTitle: "Kavita Series",
+      secondaryTitles: [],
+      thumbnailUrl: "",
+      synopsis: "",
+      contentRating: ContentRating.EVERYONE,
+    },
   };
 }
 

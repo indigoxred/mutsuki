@@ -40,7 +40,10 @@ function parsePrefixedNumber(input: string, markerPattern: RegExp): ReadingNumbe
   if (!markerMatch) return undefined;
   const afterMarker = input.slice(markerMatch.index + markerMatch[0].length).trim();
   const numericMatch = /^(\d+(?:\.\d+)?)/u.exec(afterMarker)?.[1];
-  if (numericMatch !== undefined) return readingNumberFromNumericText(numericMatch);
+  if (numericMatch !== undefined) {
+    const parsed = readingNumberFromNumericText(numericMatch);
+    return parsed && !isRejectedReadingNumber(parsed.value) ? parsed : undefined;
+  }
   const prefixedText = /^([a-z]+(?:[-\s]+[a-z]+)?)/iu.exec(afterMarker)?.[1];
   if (!prefixedText) return undefined;
   for (const candidate of numberTextCandidates(prefixedText)) {
@@ -55,7 +58,7 @@ function parsePrefixedNumber(input: string, markerPattern: RegExp): ReadingNumbe
 }
 
 function isRejectedReadingNumber(value: number): boolean {
-  return !Number.isFinite(value) || value < 0 || value === 10000 || value === -100000;
+  return !Number.isFinite(value) || value < 0 || value >= 10000 || value === -100000;
 }
 
 export function classifySpecialTitle(title: string | undefined): boolean {

@@ -67,8 +67,23 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
     return new KavitaProgressForm(sourceManga);
   }
 
-  async getMangaProgress(_sourceManga: SourceManga): Promise<MangaProgress | undefined> {
-    return undefined;
+  async getMangaProgress(sourceManga: SourceManga): Promise<MangaProgress | undefined> {
+    const settings = getKavitaSettings();
+    if (!settings.baseUrl || !settings.apiKey) return undefined;
+    try {
+      kavitaSeriesIdFromMangaId(sourceManga.mangaId);
+    } catch {
+      return undefined;
+    }
+    return {
+      sourceManga,
+      lastReadChapter: {
+        chapterId: `${sourceManga.mangaId}:progress-start`,
+        sourceManga,
+        langCode: "en",
+        chapNum: 0,
+      },
+    };
   }
 
   async processChapterReadActionQueue(
@@ -285,7 +300,7 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
       return novelChapters;
     }
 
-    return mapKavitaMangaChapters(sourceManga, chapters, client);
+    return mapKavitaMangaChapters(serverSourceManga, chapters, client);
   }
 
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {

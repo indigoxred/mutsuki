@@ -66,6 +66,8 @@ test("separates chapter parsing from volume parsing", () => {
   assert.equal(parseVolumeNumber("(2005) In the Miso Soup"), undefined);
   assert.equal(parseVolumeNumber("-100000"), undefined);
   assert.equal(parseVolumeNumber("10000"), undefined);
+  assert.equal(parseVolumeNumber("100000"), undefined);
+  assert.equal(parseVolumeNumber("Volume 10000"), undefined);
 });
 
 test("classifies common novel specials conservatively", () => {

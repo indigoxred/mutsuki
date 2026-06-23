@@ -64,6 +64,46 @@ test("server EPUB metadata routes chapters as novels when incoming content type 
   assert.equal(chapters[0]?.sourceManga.mangaInfo.contentType, "novel");
 });
 
+test("manga chapters use refreshed server SourceManga instead of stale raw cached thumbnails", async () => {
+  installApplicationStub({
+    scheduleRequest: async (request) => {
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.pathname === "/api/Series/7") {
+        return jsonResponse({
+          id: 7,
+          name: "Manga",
+          format: 1,
+          coverImage: "v56979_c76383.png",
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/api/Series/volumes") {
+        return jsonResponse([
+          {
+            number: "1",
+            chapters: [{ id: 76387, title: "Chapter 5", number: "5", pages: 7 }],
+          },
+        ]);
+      }
+      throw new Error(`Unexpected request ${request.method} ${url.pathname}`);
+    },
+  });
+
+  const staleSource = series({ contentType: "comic" });
+  staleSource.mangaInfo.thumbnailUrl = "v56979_c76383.png";
+
+  const chapters = await new MutsukiKavitaExtension().getChapters(staleSource);
+
+  assert.equal(chapters.length, 1);
+  assert.equal(
+    chapters[0]?.sourceManga.mangaInfo.thumbnailUrl,
+    "https://kavita.example.test/api/Image/series-cover?seriesId=7&apiKey=secret-key",
+  );
+  assert.equal(
+    chapters[0]?.sourceManga.mangaInfo.thumbnailUrl.includes("v56979_c76383.png"),
+    false,
+  );
+});
+
 test("chapter-number-first sorting interleaves local EPUB chapters across volumes", () => {
   const splitChapters = [1, 2, 3].flatMap((volume) =>
     [1, 2, 3, 4, 5].map((chapNum, index) => ({
