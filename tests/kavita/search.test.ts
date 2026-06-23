@@ -13,6 +13,7 @@ test("maps current Kavita grouped search results into Paperback items", async ()
           seriesId: 55,
           name: "Dungeon Meshi",
           localizedName: "Delicious in Dungeon",
+          coverImage: "series55.png",
         },
       ],
     }),
@@ -34,4 +35,32 @@ test("maps current Kavita grouped search results into Paperback items", async ()
       contentRating: ContentRating.EVERYONE,
     },
   ]);
+});
+
+test("does not emit search image URLs for Kavita results with empty cover images", async () => {
+  let coverRequests = 0;
+  const client = {
+    searchSeries: async () => ({
+      series: [
+        {
+          seriesId: 14998,
+          name: "Anohana:Part 1",
+          coverImage: "",
+        },
+      ],
+    }),
+    getSeriesCoverUrl: (seriesId: number) => {
+      coverRequests += 1;
+      return `cover-${seriesId}`;
+    },
+  };
+
+  const items = await searchKavita(
+    client as unknown as Parameters<typeof searchKavita>[0],
+    "anohana",
+    20,
+  );
+
+  assert.equal(items[0]?.imageUrl, "");
+  assert.equal(coverRequests, 0);
 });

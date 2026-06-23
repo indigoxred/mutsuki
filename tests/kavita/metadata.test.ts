@@ -21,6 +21,25 @@ test("maps Kavita series covers through the authenticated series cover endpoint"
   );
 });
 
+test("does not emit a Kavita series cover URL when Kavita reports no cover image", () => {
+  let coverRequests = 0;
+  const manga = sourceMangaFromKavitaSeries(
+    {
+      id: 14998,
+      name: "Anohana:Part 1",
+      coverImage: "",
+      libraryId: 13,
+    },
+    (seriesId) => {
+      coverRequests += 1;
+      return `https://kavita.example.test/api/Image/series-cover?seriesId=${seriesId}&apiKey=secret-key`;
+    },
+  );
+
+  assert.equal(manga.mangaInfo.thumbnailUrl, "");
+  assert.equal(coverRequests, 0);
+});
+
 test("detects numeric Kavita EPUB format as a Paperback novel", () => {
   const manga = sourceMangaFromKavitaSeries({
     id: 99,

@@ -17,7 +17,8 @@ export async function searchKavita(
       return {
         mangaId: `kavita-series:${seriesId}`,
         title: stringValue(item.name ?? item.title ?? item.localizedName) ?? "Untitled",
-        imageUrl: seriesId > 0 ? client.getSeriesCoverUrl(seriesId) : "",
+        imageUrl:
+          seriesId > 0 && hasKavitaCoverImage(item) ? client.getSeriesCoverUrl(seriesId) : "",
         contentRating: ContentRating.EVERYONE,
       };
     });
@@ -39,4 +40,9 @@ function stringValue(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function hasKavitaCoverImage(item: Record<string, unknown>): boolean {
+  const coverImage = stringValue(item.coverImage);
+  return coverImage !== undefined && coverImage.trim().length > 0;
 }

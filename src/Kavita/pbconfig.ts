@@ -3,16 +3,16 @@ import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/typ
 export default {
   name: "Mutsuki Kavita",
   description: "Connects Paperback to Kavita for manga, PDFs, and EPUB light novels.",
-  version: "0.1.9",
+  version: "0.1.10",
   icon: "icon.png",
   language: "en",
   contentRating: ContentRating.EVERYONE,
   capabilities: [
-    SourceIntents.DISCOVER_SECTION_PROVIDING |
-      SourceIntents.SEARCH_RESULT_PROVIDING |
-      SourceIntents.CHAPTER_PROVIDING |
-      SourceIntents.PROGRESS_PROVIDING |
-      SourceIntents.SETTINGS_FORM_PROVIDING,
+    SourceIntents.DISCOVER_SECTION_PROVIDING,
+    SourceIntents.SEARCH_RESULT_PROVIDING,
+    SourceIntents.CHAPTER_PROVIDING,
+    SourceIntents.PROGRESS_PROVIDING,
+    SourceIntents.SETTINGS_FORM_PROVIDING,
   ],
   badges: [
     {

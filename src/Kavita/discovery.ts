@@ -138,7 +138,7 @@ function imageUrlForSeries(
   seriesId: number,
   item: Record<string, unknown>,
 ): string {
-  if (seriesId > 0) return client.getSeriesCoverUrl(seriesId);
+  if (seriesId > 0 && hasKavitaCoverImage(item)) return client.getSeriesCoverUrl(seriesId);
   const raw = stringField(item, "imageUrl", "thumbnailUrl", "coverImage");
   return raw?.startsWith("http://") || raw?.startsWith("https://") ? raw : "";
 }
@@ -147,4 +147,9 @@ function pageNumberFromMetadata(metadata: Metadata | undefined): number {
   if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata)) return 0;
   const page = metadata.page;
   return typeof page === "number" && Number.isSafeInteger(page) && page > 0 ? page : 0;
+}
+
+function hasKavitaCoverImage(item: Record<string, unknown>): boolean {
+  const coverImage = stringField(item, "coverImage");
+  return coverImage !== undefined && coverImage.trim().length > 0;
 }

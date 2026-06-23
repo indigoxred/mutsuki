@@ -15,7 +15,10 @@ export function sourceMangaFromKavitaSeries(
   return {
     mangaId: `kavita-series:${id}`,
     mangaInfo: {
-      thumbnailUrl: id > 0 && coverUrlForSeries ? coverUrlForSeries(id) : absoluteImageUrl(item),
+      thumbnailUrl:
+        id > 0 && coverUrlForSeries && hasKavitaCoverImage(item)
+          ? coverUrlForSeries(id)
+          : absoluteImageUrl(item),
       synopsis: stringField(item, "summary", "synopsis") ?? "",
       primaryTitle: stringField(item, "name", "title", "localizedName") ?? "Untitled",
       secondaryTitles: arrayOfStrings(item.alternateTitles),
@@ -72,4 +75,9 @@ function kavitaFormatName(value: unknown): string {
 function absoluteImageUrl(item: Record<string, unknown>): string {
   const raw = stringField(item, "imageUrl", "thumbnailUrl", "coverImage");
   return raw?.startsWith("http://") || raw?.startsWith("https://") ? raw : "";
+}
+
+function hasKavitaCoverImage(item: Record<string, unknown>): boolean {
+  const coverImage = stringField(item, "coverImage");
+  return coverImage !== undefined && coverImage.trim().length > 0;
 }

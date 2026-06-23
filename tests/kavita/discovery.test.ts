@@ -59,6 +59,32 @@ test("maps all series browse items from Kavita series results", async () => {
   ]);
 });
 
+test("does not emit browse image URLs for Kavita records with empty cover images", async () => {
+  let coverRequests = 0;
+  const client = {
+    getAllSeries: async () => [
+      {
+        id: 14998,
+        name: "Anohana:Part 1",
+        coverImage: "",
+      },
+    ],
+    getSeriesCoverUrl: (seriesId: number) => {
+      coverRequests += 1;
+      return `cover-${seriesId}`;
+    },
+  };
+
+  const page = await getKavitaDiscoverItems(
+    client as unknown as Parameters<typeof getKavitaDiscoverItems>[0],
+    "all-series",
+    10,
+  );
+
+  assert.equal((page.items[0] as unknown as { imageUrl?: string } | undefined)?.imageUrl, "");
+  assert.equal(coverRequests, 0);
+});
+
 test("uses discover metadata as the next Kavita page number", async () => {
   const calls: [number, number][] = [];
   const client = {
