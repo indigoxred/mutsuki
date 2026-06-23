@@ -90,7 +90,7 @@ Default policies:
 
    ```bash
    cd apps/mock-progress-bridge
-   docker compose -f docker-compose.example.yml up --build
+   docker compose -f docker-compose.example.yml up
    ```
 
 2. In Paperback, configure Mutsuki Kavita:

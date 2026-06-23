@@ -1,6 +1,10 @@
 services:
   mutsuki-progress-bridge:
-    build: .
+    image: ghcr.io/indigoxred/mutsuki/mock-progress-bridge:latest
+    # To build locally instead:
+    # build:
+    #   context: ../..
+    #   dockerfile: apps/mock-progress-bridge/Dockerfile
     container_name: mutsuki-progress-bridge
     ports:
       - "8080:8080"

@@ -76,7 +76,7 @@ Or with Docker:
 
 ```bash
 cd apps/mock-progress-bridge
-docker compose -f docker-compose.example.yml up --build
+docker compose -f docker-compose.example.yml up
 ```
 
 Open `http://localhost:8080` to view received events. The full architecture and next bridge phase are

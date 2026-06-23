@@ -19,8 +19,16 @@ Open `http://localhost:8080`.
 
 ```bash
 cd apps/mock-progress-bridge
-docker compose -f docker-compose.example.yml up --build
+docker compose -f docker-compose.example.yml up
 ```
+
+The compose example pulls:
+
+```text
+ghcr.io/indigoxred/mutsuki/mock-progress-bridge:latest
+```
+
+For a local build, uncomment the `build` block in `docker-compose.example.yml`.
 
 Configure Mutsuki Kavita in Paperback:
 
