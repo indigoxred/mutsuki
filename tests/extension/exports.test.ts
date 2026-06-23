@@ -5,6 +5,8 @@ import test from "node:test";
 
 import * as ts from "typescript";
 
+import { Kavita } from "../../src/Kavita/main.js";
+
 test("each extension exports an instance named after its Paperback id", () => {
   const srcDir = path.join(process.cwd(), "src");
   const extensionIds = extensionSourceIds(srcDir);
@@ -36,6 +38,33 @@ test("extension icons use Paperback-compatible raster PNG assets", () => {
   });
 
   assert.deepEqual(invalidIcons, []);
+});
+
+test("Kavita exported runtime object exposes progress-provider methods", () => {
+  assert.equal(typeof Kavita.getMangaProgressManagementForm, "function");
+  assert.equal(typeof Kavita.getMangaProgress, "function");
+  assert.equal(typeof Kavita.processChapterReadActionQueue, "function");
+});
+
+test("generated Kavita bundle keeps progress methods on the exported runtime object", () => {
+  const bundle = readFileSync(path.join(process.cwd(), "bundles", "Kavita", "index.js"), "utf8");
+
+  assert.match(bundle, /getMangaProgressManagementForm/u);
+  assert.match(bundle, /getMangaProgress/u);
+  assert.match(bundle, /processChapterReadActionQueue/u);
+  assert.match(bundle, /Kavita=/u);
+});
+
+test("generated versioning advertises PROGRESS_PROVIDING as distinct capability 2", () => {
+  const versioning = JSON.parse(
+    readFileSync(path.join(process.cwd(), "bundles", "versioning.json"), "utf8"),
+  ) as { sources: Array<{ id: string; capabilities: number[] }> };
+  const kavita = versioning.sources.find((source) => source.id === "Kavita");
+
+  assert.ok(kavita);
+  assert.ok(kavita.capabilities.includes(2));
+  assert.equal(kavita.capabilities.filter((capability) => capability === 2).length, 1);
+  assert.equal(kavita.capabilities.includes(103), false);
 });
 
 function extensionSourceIds(srcDir: string): string[] {

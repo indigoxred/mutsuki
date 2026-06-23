@@ -8,8 +8,8 @@ It contains two separately installable extensions:
 - **Mutsuki MyAnimeList**: authenticate with MAL, link titles through Paperback's tracker workflow, and update chapter/volume progress without regressions.
 
 It also includes a development-only mock progress bridge at `apps/mock-progress-bridge`. The bridge
-receives read-progress events from Mutsuki Kavita so the Paperback progress hook can be tested before
-building the full Kavita-to-MyAnimeList sync service.
+is currently diagnostic: it can prove Paperback-to-bridge networking from a settings action, but
+automatic read-completion delivery from Paperback to the original Kavita source is not proven.
 
 ## Supported Formats
 
@@ -61,9 +61,14 @@ Offsets are supported in the policy model for mismatched Kavita/MAL numbering. S
 
 ## Automatic Progress Sync Feasibility
 
-Mutsuki Kavita implements Paperback's progress-provider queue hook. Completed reads are mapped back
-to Kavita identifiers and marked read in Kavita. When a progress bridge URL is configured in Mutsuki
-Kavita settings, the source also posts a sanitized event to the mock bridge.
+Mutsuki Kavita implements Paperback's progress-provider method shape, and the generated manifest
+advertises `PROGRESS_PROVIDING`. Live Paperback testing currently shows completed reads updating
+Paperback's local progress without invoking Mutsuki Kavita's progress queue method. Automatic
+Paperback-to-Kavita read sync is therefore blocked until Paperback can deliver a read-completion
+callback to the original source or to an automatically associated provider.
+
+The settings action **Send mock bridge test event** posts one synthetic diagnostic event to the mock
+bridge. It only proves iOS/Paperback networking to the bridge; it is not a read-sync solution.
 
 Run the mock bridge:
 
@@ -80,7 +85,8 @@ docker compose -f docker-compose.example.yml up
 ```
 
 Open `http://localhost:8080` to view received events. The full architecture and next bridge phase are
-documented in `docs/progress-sync-architecture.md`.
+documented in `docs/progress-sync-architecture.md`; the current read-event boundary is documented in
+`docs/paperback-read-event-blocker.md`.
 
 ## Development
 

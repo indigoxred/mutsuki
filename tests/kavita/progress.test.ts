@@ -207,6 +207,54 @@ test("Kavita extension exposes active zero progress so Paperback can queue read 
   assert.equal(progress.lastReadChapter.chapterId, "kavita-series:7:progress-start");
 });
 
+test("Kavita extension logs runtime progress-provider capability diagnostics on initialise", async () => {
+  installApplicationStub({
+    scheduleRequest: async () => {
+      throw new Error("initialise should not request network data");
+    },
+  });
+  const logs = captureConsoleLogs();
+
+  await new MutsukiKavitaExtension().initialise();
+
+  logs.restore();
+  assert.ok(
+    logs.entries.some(
+      (entry) =>
+        entry.includes("[MutsukiProgressRuntime]") &&
+        entry.includes("progressManagementForm=true") &&
+        entry.includes("progressGetter=true") &&
+        entry.includes("progressQueue=true"),
+    ),
+  );
+});
+
+test("Kavita extension logs queue entry before settings reads", async () => {
+  Object.defineProperty(globalThis, "Application", {
+    configurable: true,
+    value: {
+      getState: () => {
+        throw new Error("settings read should happen after ENTER diagnostic");
+      },
+      getSecureState: () => "",
+      Selector: () => undefined,
+    },
+  });
+  const logs = captureConsoleLogs();
+
+  const result = await new MutsukiKavitaExtension().processChapterReadActionQueue([
+    action({ id: "queued-action-1", chapterId: "kavita-chapter:55", chapterNum: 12 }),
+  ]);
+
+  logs.restore();
+  assert.deepEqual(result, { successfulItems: [], failedItems: ["queued-action-1"] });
+  const enterIndex = logs.entries.findIndex((entry) =>
+    entry.includes("[MutsukiProgressQueue] ENTER"),
+  );
+  assert.notEqual(enterIndex, -1);
+  assert.ok(logs.entries[enterIndex]?.includes("actionIds=queued-action-1"));
+});
+
 function action(input: {
   id: string;
   mangaId?: string;
@@ -286,4 +334,18 @@ function installApplicationStub(input: {
       arrayBufferToUTF8String: (buffer: ArrayBuffer) => new TextDecoder().decode(buffer),
     },
   });
+}
+
+function captureConsoleLogs(): { entries: string[]; restore: () => void } {
+  const original = console.log;
+  const entries: string[] = [];
+  console.log = (...args: unknown[]) => {
+    entries.push(args.map((arg) => String(arg)).join(" "));
+  };
+  return {
+    entries,
+    restore: () => {
+      console.log = original;
+    },
+  };
 }

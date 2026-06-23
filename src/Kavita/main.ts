@@ -56,8 +56,12 @@ type KavitaImplementation = Extension &
   SettingsFormProviding &
   MangaProgressProviding;
 
+let exportedKavitaRuntime: MutsukiKavitaExtension | undefined;
+
 export class MutsukiKavitaExtension implements KavitaImplementation {
-  async initialise(): Promise<void> {}
+  async initialise(): Promise<void> {
+    logProgressRuntimeCapabilities(exportedKavitaRuntime ?? this);
+  }
 
   async getSettingsForm(): Promise<Form> {
     return new KavitaSettingsForm();
@@ -89,7 +93,29 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
   async processChapterReadActionQueue(
     actions: TrackedMangaChapterReadAction[],
   ): Promise<ChapterReadActionQueueProcessingResult> {
-    const settings = getKavitaSettings();
+    console.log(
+      [
+        "[MutsukiProgressQueue] ENTER",
+        `build=${MUTSUKI_KAVITA_BUILD}`,
+        `actionCount=${actions.length}`,
+        `actionIds=${actions.map((action) => sanitizeLogText(action.id)).join(",")}`,
+      ].join(" "),
+    );
+
+    let settings: ReturnType<typeof getKavitaSettings>;
+    try {
+      settings = getKavitaSettings();
+    } catch (error) {
+      console.log(
+        [
+          "[MutsukiProgressQueue] SETTINGS_ERROR",
+          `build=${MUTSUKI_KAVITA_BUILD}`,
+          `actionCount=${actions.length}`,
+          `error=${sanitizeLogText(error instanceof Error ? error.message : String(error))}`,
+        ].join(" "),
+      );
+      return { successfulItems: [], failedItems: actions.map((action) => action.id) };
+    }
     if (!settings.baseUrl || !settings.apiKey) {
       return { successfulItems: [], failedItems: actions.map((action) => action.id) };
     }
@@ -377,9 +403,9 @@ class KavitaProgressForm extends Form {
     return [
       Section({ id: "kavita-progress", header: "Kavita Progress" }, [
         LabelRow("summary", {
-          title: "Automatic Kavita updates",
+          title: "Kavita progress diagnostics",
           subtitle:
-            "Completed reads from this source are queued by Paperback and marked read in Kavita. Configure the mock bridge URL in source settings to display received events.",
+            "This provider is instrumented to detect whether Paperback dispatches read actions to Mutsuki Kavita. Automatic source read sync is not proven yet.",
         }),
         LabelRow("series", {
           title: "Paperback series id",
@@ -391,6 +417,7 @@ class KavitaProgressForm extends Form {
 }
 
 export const Kavita = new MutsukiKavitaExtension();
+exportedKavitaRuntime = Kavita;
 export const MutsukiKavita = Kavita;
 
 function numberValue(value: unknown): number | undefined {
@@ -613,6 +640,19 @@ function sanitizeLogText(value: unknown): string {
     .replace(/\?.*$/u, "")
     .replace(/[^\p{L}\p{N} .:_-]+/gu, "")
     .slice(0, 80);
+}
+
+function logProgressRuntimeCapabilities(runtime: MutsukiKavitaExtension): void {
+  const record = runtime as unknown as Record<string, unknown>;
+  console.log(
+    [
+      "[MutsukiProgressRuntime]",
+      `build=${MUTSUKI_KAVITA_BUILD}`,
+      `progressManagementForm=${typeof record.getMangaProgressManagementForm === "function"}`,
+      `progressGetter=${typeof record.getMangaProgress === "function"}`,
+      `progressQueue=${typeof record.processChapterReadActionQueue === "function"}`,
+    ].join(" "),
+  );
 }
 
 function correctedNovelSourceManga(
