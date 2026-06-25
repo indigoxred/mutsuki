@@ -54,17 +54,19 @@ test("server EPUB metadata routes chapters as novels when incoming content type 
     },
   });
 
-  const chapters = await new MutsukiKavitaExtension().getChapters(series({ contentType: "comic" }));
+  const incomingSource = series({ contentType: "comic" });
+  const chapters = await new MutsukiKavitaExtension().getChapters(incomingSource);
 
   assert.equal(chapters.length, 1);
   assert.equal(chapters[0]?.chapterId, "kavita-book:55:whole:v1");
   assert.equal(chapters[0]?.chapNum, 1);
   assert.equal(chapters[0]?.additionalInfo?.listingMode, "physical-books");
   assert.equal(chapters[0]?.additionalInfo?.isLastInVolume, "true");
-  assert.equal(chapters[0]?.sourceManga.mangaInfo.contentType, "novel");
+  assert.equal(chapters[0]?.sourceManga, incomingSource);
+  assert.equal(chapters[0]?.additionalInfo?.resolvedContentType, "novel");
 });
 
-test("manga chapters use refreshed server SourceManga instead of stale raw cached thumbnails", async () => {
+test("manga chapters preserve the exact incoming SourceManga required by Paperback", async () => {
   installApplicationStub({
     scheduleRequest: async (request) => {
       const url = new URL(request.url);
@@ -94,14 +96,9 @@ test("manga chapters use refreshed server SourceManga instead of stale raw cache
   const chapters = await new MutsukiKavitaExtension().getChapters(staleSource);
 
   assert.equal(chapters.length, 1);
-  assert.equal(
-    chapters[0]?.sourceManga.mangaInfo.thumbnailUrl,
-    "https://kavita.example.test/api/Image/series-cover?seriesId=7&apiKey=secret-key",
-  );
-  assert.equal(
-    chapters[0]?.sourceManga.mangaInfo.thumbnailUrl.includes("v56979_c76383.png"),
-    false,
-  );
+  assert.equal(chapters[0]?.chapterId, "kavita-chapter:76387");
+  assert.equal(chapters[0]?.sourceManga, staleSource);
+  assert.equal(chapters[0]?.additionalInfo?.resolvedContentType, "comic");
 });
 
 test("chapter-number-first sorting interleaves local EPUB chapters across volumes", () => {

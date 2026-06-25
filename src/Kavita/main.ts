@@ -199,7 +199,6 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
     const chapters = parseKavitaChapterDtos(await client.getVolumes(seriesId));
 
     if (serverSourceManga.mangaInfo.contentType === "novel") {
-      const novelSourceManga = correctedNovelSourceManga(sourceManga, serverSourceManga);
       const physicalBooks = await Promise.all(
         chapters.map(async (chapter, index): Promise<NovelPhysicalBook> => {
           const bookInfo = await cachedBookInfo(client, chapter.id);
@@ -257,7 +256,7 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
 
           if (!plan.autoSplitTriggered && plan.units.length === 1) {
             const chapter = physicalBookToPaperback({
-              sourceManga: novelSourceManga,
+              sourceManga,
               kavitaSeriesId: seriesId,
               book,
               seriesTitle: serverSourceManga.mangaInfo.primaryTitle,
@@ -268,7 +267,7 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
             for (const unit of plan.units) {
               physicalChapters.push(
                 readingUnitToPaperback({
-                  sourceManga: novelSourceManga,
+                  sourceManga,
                   kavitaSeriesId: seriesId,
                   book,
                   unit,
@@ -297,7 +296,7 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
           includePublisherExtras: settings.includePublisherExtras,
         });
         const expanded = await getNovelChaptersFromBook({
-          sourceManga: novelSourceManga,
+          sourceManga,
           client,
           kavitaSeriesId: seriesId,
           kavitaVolumeId: book.kavitaVolumeId,
@@ -326,7 +325,7 @@ export class MutsukiKavitaExtension implements KavitaImplementation {
       return novelChapters;
     }
 
-    return mapKavitaMangaChapters(serverSourceManga, chapters, client);
+    return mapKavitaMangaChapters(sourceManga, chapters, client);
   }
 
   async getChapterDetails(chapter: Chapter): Promise<ChapterDetails> {
@@ -463,6 +462,7 @@ function physicalBookToPaperback(input: {
       isSpecial: "false",
       isLastInVolume: "true",
       listingMode: "physical-books",
+      resolvedContentType: "novel",
       role: "physical-book",
       localChapterNumber: "1",
       physicalBookNumber: String(input.sortingIndex + 1),
@@ -506,6 +506,7 @@ function readingUnitToPaperback(input: {
       isSpecial: String(input.unit.role !== "narrative"),
       isLastInVolume: String(input.unit.isLastInPhysicalBook),
       listingMode: "physical-books",
+      resolvedContentType: "novel",
       role: input.unit.role,
       localChapterNumber: "1",
       physicalBookNumber: String(input.sortingIndex + 1),
@@ -653,22 +654,4 @@ function logProgressRuntimeCapabilities(runtime: MutsukiKavitaExtension): void {
       `progressQueue=${typeof record.processChapterReadActionQueue === "function"}`,
     ].join(" "),
   );
-}
-
-function correctedNovelSourceManga(
-  sourceManga: SourceManga,
-  serverSourceManga: SourceManga,
-): SourceManga {
-  return {
-    ...sourceManga,
-    mangaInfo: {
-      ...sourceManga.mangaInfo,
-      ...serverSourceManga.mangaInfo,
-      additionalInfo: {
-        ...sourceManga.mangaInfo.additionalInfo,
-        ...serverSourceManga.mangaInfo.additionalInfo,
-      },
-      contentType: "novel",
-    },
-  };
 }

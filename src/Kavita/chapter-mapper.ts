@@ -71,6 +71,7 @@ export function mangaChapterToPaperback(input: {
     additionalInfo: {
       kavitaChapterId: String(input.kavitaChapter.id),
       isSpecial: String(input.kavitaChapter.isSpecial ?? false),
+      resolvedContentType: "comic",
     },
     sortingIndex: input.sortingIndex,
   };
@@ -125,6 +126,7 @@ export function novelChapterToPaperback(input: {
       isSpecial: String(input.logicalChapter.isSpecial),
       isLastInVolume: String(input.logicalChapter.isLastInVolume),
       listingMode: "internal-chapters",
+      resolvedContentType: "novel",
       role: input.logicalChapter.role,
       localChapterNumber: String(input.logicalChapter.chapterNumber),
       structuralTocEntriesFiltered: String(input.logicalChapter.structuralTocEntriesFiltered ?? 0),
