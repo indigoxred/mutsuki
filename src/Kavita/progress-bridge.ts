@@ -37,11 +37,31 @@ export async function sendProgressBridgeEvent(input: {
 }
 
 export function progressEventsEndpoint(bridgeUrl: string): string {
-  const trimmed = bridgeUrl.trim();
+  const url = parseBridgeUrl(bridgeUrl);
+  const path = url.path.replace(/\/+$/u, "");
+  return `${url.protocol}://${url.host}${path}/api/progress-events`;
+}
+
+interface ParsedBridgeUrl {
+  protocol: "http" | "https";
+  host: string;
+  path: string;
+}
+
+function parseBridgeUrl(input: string): ParsedBridgeUrl {
+  const trimmed = input.trim();
   if (!trimmed) throw new Error("Missing progress bridge URL.");
-  const url = new URL(trimmed);
-  url.pathname = `${url.pathname.replace(/\/+$/u, "")}/api/progress-events`;
-  url.search = "";
-  url.hash = "";
-  return url.toString();
+  const match =
+    /^(?<protocol>https?):\/\/(?<host>[^/?#\s]+)(?<path>\/[^?#\s]*)?(?:\?[^#\s]*)?(?:#[^\s]*)?$/iu.exec(
+      trimmed,
+    );
+  const groups = match?.groups;
+  if (!groups?.protocol || !groups.host) {
+    throw new Error("Invalid progress bridge URL.");
+  }
+  return {
+    protocol: groups.protocol.toLowerCase() as "http" | "https",
+    host: groups.host.toLowerCase(),
+    path: groups.path ?? "",
+  };
 }
