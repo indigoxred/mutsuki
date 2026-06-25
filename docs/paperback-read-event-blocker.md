@@ -82,6 +82,15 @@ exiting loop`.
 This indicates that reading a chapter from a source extension is not sufficient
 to enqueue a progress-provider action for that same source.
 
+A later device test associated a MangaDex title with the separate `Mutsuki
+Progress Bridge` tracker. Paperback invoked that tracker and the bridge received
+a queued read action with `chapterSourceId: "MangaDex"`, the MangaDex series id,
+the original Paperback chapter id, `sourceTitle`, and `chapterNum`. In the same
+test window, reading Mutsuki Kavita content still produced no
+`[MutsukiProgressQueue] ENTER` marker. This proves the tracker/provider queue
+surface can work for an explicitly associated tracker, while the original
+content source still does not receive automatic self-notifications.
+
 ## Known Tracker Pattern
 
 Public tracker extensions such as MangaUpdates implement progress handling as a

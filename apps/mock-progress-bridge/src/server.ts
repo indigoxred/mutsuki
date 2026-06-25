@@ -111,10 +111,8 @@ async function renderHome(store: ProgressEventStore): Promise<string> {
 
 function eventRow(event: MockProgressEvent): string {
   const source = event.chapterSourceId ?? (event.kavitaSeriesId ? "Kavita" : event.source);
-  const series = event.kavitaSeriesId
-    ? String(event.kavitaSeriesId)
-    : (event.chapterMangaId ?? event.mangaId);
-  const chapter = event.kavitaChapterId ? String(event.kavitaChapterId) : event.paperbackChapterId;
+  const series = displaySeries(event);
+  const chapter = displayChapter(event);
   return `<tr>
     <td>${escapeHtml(event.receivedAt)}</td>
     <td>${escapeHtml(source)}</td>
@@ -124,6 +122,38 @@ function eventRow(event: MockProgressEvent): string {
     <td>${event.kavitaMarkedRead ? "yes" : "no"}</td>
     <td><code>${escapeHtml(event.paperbackChapterId)}</code></td>
   </tr>`;
+}
+
+function displaySeries(event: MockProgressEvent): string {
+  if (event.sourceTitle?.trim()) return event.sourceTitle.trim();
+  if (event.trackedTitle?.trim()) return event.trackedTitle.trim();
+  if (event.kavitaSeriesId !== undefined) return `Kavita series ${event.kavitaSeriesId}`;
+  return event.chapterMangaId ?? event.mangaId;
+}
+
+function displayChapter(event: MockProgressEvent): string {
+  const number = displayChapterNumber(event);
+  const title = event.title.trim();
+  if (!title) return number;
+  if (isRedundantChapterTitle(title, event.chapterNum)) return number;
+  return `${number} - ${title}`;
+}
+
+function displayChapterNumber(event: MockProgressEvent): string {
+  const chapter = `Ch. ${formatProgressNumber(event.chapterNum)}`;
+  if (event.chapterVolume !== undefined && event.chapterVolume > 0) {
+    return `Vol. ${formatProgressNumber(event.chapterVolume)}, ${chapter}`;
+  }
+  return chapter;
+}
+
+function formatProgressNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(value).replace(/\.0+$/u, "");
+}
+
+function isRedundantChapterTitle(title: string, chapterNum: number): boolean {
+  const number = formatProgressNumber(chapterNum).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`^(?:ch\\.?|chapter)\\s*${number}$`, "iu").test(title.trim());
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {

@@ -82,9 +82,10 @@ test("mock progress bridge accepts generic Paperback tracker events", async () =
       isLastInVolume: false,
       shouldMarkKavitaRead: false,
       kavitaMarkedRead: false,
-      title: "Chapter 1",
+      title: "",
       listingMode: "tracker-bridge",
       role: "read-action",
+      sourceTitle: "A Story About Wanting to Commit Suicide",
     };
 
     const post = await fetch(`${baseUrl}/api/progress-events`, {
@@ -103,6 +104,8 @@ test("mock progress bridge accepts generic Paperback tracker events", async () =
     const page = await fetch(baseUrl);
     const html = await page.text();
     assert.match(html, /MangaDex/u);
+    assert.match(html, /A Story About Wanting to Commit Suicide/u);
+    assert.match(html, /Ch\. 1/u);
     assert.match(html, /05bab466-2efc-488f-bea9-90ca849c4f11/u);
   } finally {
     await new Promise<void>((resolve, reject) =>

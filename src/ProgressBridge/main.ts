@@ -32,7 +32,7 @@ type ProgressBridgeImplementation = Extension &
   SettingsFormProviding &
   MangaProgressProviding;
 
-const PROGRESS_BRIDGE_VERSION = "0.1.1";
+const PROGRESS_BRIDGE_VERSION = "0.1.2";
 const PROGRESS_BRIDGE_ICON_URL =
   "https://indigoxred.github.io/mutsuki/ProgressBridge/static/icon.png";
 
@@ -328,7 +328,7 @@ function progressBridgeEventFromAction(
     isLastInVolume,
     shouldMarkKavitaRead: false,
     kavitaMarkedRead: false,
-    title: action.readChapter?.title ?? "",
+    title: titleFromReadAction(action),
     listingMode: "tracker-bridge",
     role: "read-action",
     trackedTitle: action.sourceManga.mangaInfo.primaryTitle,
@@ -385,6 +385,16 @@ function titleFromTrackingId(mangaId: string): string {
     .filter(Boolean)
     .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+function titleFromReadAction(action: TrackedMangaChapterReadAction): string {
+  const title = action.readChapter?.title?.trim();
+  if (title) return title;
+  return `Chapter ${formatProgressNumber(action.chapterNum)}`;
+}
+
+function formatProgressNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(value).replace(/\.0+$/u, "");
 }
 
 function slugify(title: string): string {

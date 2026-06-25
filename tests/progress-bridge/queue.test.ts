@@ -45,6 +45,35 @@ test("progress bridge tracker forwards queued read actions from any source", asy
   assert.equal(events[0]?.kavitaMarkedRead, false);
 });
 
+test("progress bridge tracker resolves source titles and fallback chapter labels", async () => {
+  const events: ProgressBridgeEvent[] = [];
+
+  await processProgressBridgeReadActionQueue({
+    actions: [
+      action({
+        id: "read-1",
+        trackerMangaId: "bridge-track:a-story",
+        chapterSourceId: "MangaDex",
+        chapterMangaId: "mangadex-title-1",
+        chapterId: "chapter-12",
+        chapterNum: 12,
+        chapterVolume: 0,
+        sourceTitle: "A Story About Wanting to Commit Suicide",
+        chapterTitle: "",
+      }),
+    ],
+    sendBridgeEvent: async (event) => {
+      events.push(event);
+    },
+    now: () => new Date("2026-06-25T00:00:00.000Z"),
+  });
+
+  assert.equal(events[0]?.sourceTitle, "A Story About Wanting to Commit Suicide");
+  assert.equal(events[0]?.title, "Chapter 12");
+  assert.equal(events[0]?.chapterNum, 12);
+  assert.equal(events[0]?.chapterVolume, 0);
+});
+
 test("progress bridge tracker leaves failed posts retryable", async () => {
   const result = await processProgressBridgeReadActionQueue({
     actions: [
@@ -113,16 +142,18 @@ function action(input: {
   chapterId: string;
   chapterNum: number;
   chapterVolume?: number;
+  sourceTitle?: string;
+  chapterTitle?: string;
 }): TrackedMangaChapterReadAction {
   const trackerManga = sourceManga(input.trackerMangaId);
-  const sourceMangaForChapter = sourceManga(input.chapterMangaId);
+  const sourceMangaForChapter = sourceManga(input.chapterMangaId, input.sourceTitle);
   const readChapter: Chapter = {
     chapterId: input.chapterId,
     sourceManga: sourceMangaForChapter,
     langCode: "en",
     chapNum: input.chapterNum,
     volume: input.chapterVolume,
-    title: `Chapter ${input.chapterNum}`,
+    title: input.chapterTitle ?? `Chapter ${input.chapterNum}`,
   };
   return {
     id: input.id,
@@ -138,11 +169,11 @@ function action(input: {
   };
 }
 
-function sourceManga(mangaId: string): SourceManga {
+function sourceManga(mangaId: string, title = mangaId): SourceManga {
   return {
     mangaId,
     mangaInfo: {
-      primaryTitle: mangaId,
+      primaryTitle: title,
       secondaryTitles: [],
       thumbnailUrl: "",
       synopsis: "",

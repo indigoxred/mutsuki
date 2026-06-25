@@ -45,9 +45,9 @@ The `Mutsuki Progress Bridge` extension is a separate diagnostic tracker/provide
 update Kavita or MAL. Its only job is to receive Paperback `TrackedMangaChapterReadAction` queue
 items for titles associated with that tracker and forward sanitized events to the mock bridge. This
 is the viable route for future cross-source events, because the action payload includes
-`chapterSourceId`, `chapterMangaId`, and the original source chapter id. It still depends on
-Paperback associating the title with the tracker/provider, so it is not the rejected automatic
-source-to-Kavita workflow.
+`chapterSourceId`, `chapterMangaId`, the original source chapter id, source title metadata, and
+chapter/volume numbers. It still depends on Paperback associating the title with the
+tracker/provider, so it is not the rejected automatic source-to-Kavita workflow.
 
 ## Why The Mock Bridge Exists First
 
@@ -84,6 +84,9 @@ Generic tracker events include:
 - original Paperback chapter id
 - chapter and volume numbers seen by Paperback
 - title metadata supplied in the read action
+
+The mock bridge UI prefers human-readable source title and chapter number fields, while retaining the
+raw Paperback chapter id for debugging.
 
 Events must not contain:
 
