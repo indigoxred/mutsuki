@@ -91,6 +91,18 @@ test("progress bridge tracker search returns a stable synthetic tracking target"
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0]?.mangaId, "bridge-track:a-story");
   assert.equal(result.items[0]?.title, "A Story");
+  assert.match(result.items[0]?.imageUrl ?? "", /^https:\/\//u);
+  assert.doesNotThrow(() => new URL(result.items[0]?.imageUrl ?? ""));
+});
+
+test("progress bridge tracking target uses a Paperback-valid thumbnail URL", async () => {
+  installApplicationStub();
+  const sourceManga = await new MutsukiProgressBridgeExtension().getMangaDetails(
+    "bridge-track:a-story",
+  );
+
+  assert.match(sourceManga.mangaInfo.thumbnailUrl, /^https:\/\//u);
+  assert.doesNotThrow(() => new URL(sourceManga.mangaInfo.thumbnailUrl));
 });
 
 function action(input: {

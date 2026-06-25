@@ -32,6 +32,10 @@ type ProgressBridgeImplementation = Extension &
   SettingsFormProviding &
   MangaProgressProviding;
 
+const PROGRESS_BRIDGE_VERSION = "0.1.1";
+const PROGRESS_BRIDGE_ICON_URL =
+  "https://indigoxred.github.io/mutsuki/ProgressBridge/static/icon.png";
+
 export interface ProgressBridgeEvent {
   version: 1;
   source: "paperback-progress-provider";
@@ -71,7 +75,7 @@ export class MutsukiProgressBridgeExtension implements ProgressBridgeImplementat
   async initialise(): Promise<void> {
     console.log(
       "[MutsukiBridgeRuntime]",
-      "build=0.1.0",
+      `build=${PROGRESS_BRIDGE_VERSION}`,
       "progressManagementForm=true",
       "progressGetter=true",
       "progressQueue=true",
@@ -140,7 +144,7 @@ export class MutsukiProgressBridgeExtension implements ProgressBridgeImplementat
           mangaId: trackingIdForTitle(title),
           title,
           subtitle: "Forward read actions to Mutsuki Progress Bridge",
-          imageUrl: "",
+          imageUrl: PROGRESS_BRIDGE_ICON_URL,
           contentRating: ContentRating.EVERYONE,
         },
       ],
@@ -366,7 +370,7 @@ function sourceMangaForTrackingTarget(mangaId: string): SourceManga {
     mangaInfo: {
       primaryTitle: titleFromTrackingId(mangaId),
       secondaryTitles: [],
-      thumbnailUrl: "",
+      thumbnailUrl: PROGRESS_BRIDGE_ICON_URL,
       synopsis:
         "Synthetic Mutsuki Progress Bridge tracking target. It forwards queued read actions to the configured bridge.",
       contentRating: ContentRating.EVERYONE,
