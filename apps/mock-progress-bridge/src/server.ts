@@ -94,6 +94,7 @@ async function renderHome(store: ProgressEventStore): Promise<string> {
       <thead>
         <tr>
           <th>Received</th>
+          <th>Source</th>
           <th>Series</th>
           <th>Chapter</th>
           <th>Kind</th>
@@ -101,7 +102,7 @@ async function renderHome(store: ProgressEventStore): Promise<string> {
           <th>Paperback ID</th>
         </tr>
       </thead>
-      <tbody>${rows || '<tr><td colspan="6">No read events yet.</td></tr>'}</tbody>
+      <tbody>${rows || '<tr><td colspan="7">No read events yet.</td></tr>'}</tbody>
     </table>
   </main>
 </body>
@@ -109,10 +110,16 @@ async function renderHome(store: ProgressEventStore): Promise<string> {
 }
 
 function eventRow(event: MockProgressEvent): string {
+  const source = event.chapterSourceId ?? (event.kavitaSeriesId ? "Kavita" : event.source);
+  const series = event.kavitaSeriesId
+    ? String(event.kavitaSeriesId)
+    : (event.chapterMangaId ?? event.mangaId);
+  const chapter = event.kavitaChapterId ? String(event.kavitaChapterId) : event.paperbackChapterId;
   return `<tr>
     <td>${escapeHtml(event.receivedAt)}</td>
-    <td>${event.kavitaSeriesId}</td>
-    <td>${event.kavitaChapterId}</td>
+    <td>${escapeHtml(source)}</td>
+    <td>${escapeHtml(series)}</td>
+    <td>${escapeHtml(chapter)}</td>
     <td>${escapeHtml(event.chapterKind)}</td>
     <td>${event.kavitaMarkedRead ? "yes" : "no"}</td>
     <td><code>${escapeHtml(event.paperbackChapterId)}</code></td>

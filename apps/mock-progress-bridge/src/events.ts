@@ -1,13 +1,15 @@
 export interface MockProgressEvent {
   version: 1;
-  source: "paperback-mutsuki";
+  source: "paperback-mutsuki" | "paperback-progress-provider";
   actionId: string;
   occurredAt: string;
   receivedAt: string;
   mangaId: string;
   paperbackChapterId: string;
-  kavitaSeriesId: number;
-  kavitaChapterId: number;
+  kavitaSeriesId?: number;
+  kavitaChapterId?: number;
+  chapterSourceId?: string;
+  chapterMangaId?: string;
   chapterKind: "manga" | "book";
   chapterNum: number;
   chapterVolume?: number;
@@ -17,6 +19,8 @@ export interface MockProgressEvent {
   title: string;
   listingMode: string;
   role: string;
+  trackedTitle?: string;
+  sourceTitle?: string;
   segmentIndex?: number;
   segmentCount?: number;
 }
@@ -25,14 +29,19 @@ export function parseMockProgressEvent(input: unknown): MockProgressEvent {
   if (!isRecord(input)) throw new Error("Event must be an object.");
   const event: MockProgressEvent = {
     version: 1,
-    source: "paperback-mutsuki",
+    source:
+      input.source === "paperback-progress-provider"
+        ? "paperback-progress-provider"
+        : "paperback-mutsuki",
     actionId: requiredString(input.actionId, "actionId"),
     occurredAt: requiredString(input.occurredAt, "occurredAt"),
     receivedAt: requiredString(input.receivedAt, "receivedAt"),
     mangaId: requiredString(input.mangaId, "mangaId"),
     paperbackChapterId: requiredString(input.paperbackChapterId, "paperbackChapterId"),
-    kavitaSeriesId: requiredPositiveInteger(input.kavitaSeriesId, "kavitaSeriesId"),
-    kavitaChapterId: requiredPositiveInteger(input.kavitaChapterId, "kavitaChapterId"),
+    kavitaSeriesId: optionalPositiveInteger(input.kavitaSeriesId),
+    kavitaChapterId: optionalPositiveInteger(input.kavitaChapterId),
+    chapterSourceId: optionalStringOrUndefined(input.chapterSourceId),
+    chapterMangaId: optionalStringOrUndefined(input.chapterMangaId),
     chapterKind: input.chapterKind === "book" ? "book" : "manga",
     chapterNum: requiredFiniteNumber(input.chapterNum, "chapterNum"),
     chapterVolume: optionalFiniteNumber(input.chapterVolume),
@@ -42,6 +51,8 @@ export function parseMockProgressEvent(input: unknown): MockProgressEvent {
     title: optionalString(input.title),
     listingMode: optionalString(input.listingMode),
     role: optionalString(input.role),
+    trackedTitle: optionalStringOrUndefined(input.trackedTitle),
+    sourceTitle: optionalStringOrUndefined(input.sourceTitle),
     segmentIndex: optionalPositiveInteger(input.segmentIndex),
     segmentCount: optionalPositiveInteger(input.segmentCount),
   };
@@ -61,10 +72,9 @@ function optionalString(value: unknown): string {
   return typeof value === "string" ? value.slice(0, 500) : "";
 }
 
-function requiredPositiveInteger(value: unknown, field: string): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`Invalid ${field}.`);
-  return parsed;
+function optionalStringOrUndefined(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  return value.slice(0, 500);
 }
 
 function optionalPositiveInteger(value: unknown): number | undefined {

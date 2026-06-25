@@ -1,3 +1,3 @@
-export const MUTSUKI_KAVITA_VERSION = "0.1.13";
-export const MUTSUKI_KAVITA_SHORT_SHA = "bridge-url-fallback";
+export const MUTSUKI_KAVITA_VERSION = "0.1.14";
+export const MUTSUKI_KAVITA_SHORT_SHA = "progress-bridge";
 export const MUTSUKI_KAVITA_BUILD = `${MUTSUKI_KAVITA_VERSION}+${MUTSUKI_KAVITA_SHORT_SHA}`;

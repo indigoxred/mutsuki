@@ -21,9 +21,10 @@ Paperback 0.9 exposes `MangaProgressProviding.processChapterReadActionQueue()` i
 prove its downstream queue processor can map read actions to Kavita identifiers already preserved in
 chapter IDs and `additionalInfo`.
 
-Live Paperback testing has not proven the critical first step. Paperback marks chapters complete
-locally, but it does not invoke Mutsuki Kavita's `processChapterReadActionQueue()` for the original
-content source in the observed sessions. See `docs/paperback-read-event-blocker.md`.
+Live Paperback testing has not proven the critical first step for the content source. Paperback marks
+chapters complete locally, but it does not invoke Mutsuki Kavita's
+`processChapterReadActionQueue()` for the original content source in the observed sessions. See
+`docs/paperback-read-event-blocker.md`.
 
 The source extension contains provisional code which, if Paperback supplies actions, would:
 
@@ -40,18 +41,29 @@ device.
 The mock bridge is in `apps/mock-progress-bridge`. It receives events at
 `POST /api/progress-events`, stores them as JSONL, and displays them at `/`.
 
+The `Mutsuki Progress Bridge` extension is a separate diagnostic tracker/provider. It does not
+update Kavita or MAL. Its only job is to receive Paperback `TrackedMangaChapterReadAction` queue
+items for titles associated with that tracker and forward sanitized events to the mock bridge. This
+is the viable route for future cross-source events, because the action payload includes
+`chapterSourceId`, `chapterMangaId`, and the original source chapter id. It still depends on
+Paperback associating the title with the tracker/provider, so it is not the rejected automatic
+source-to-Kavita workflow.
+
 ## Why The Mock Bridge Exists First
 
-The riskiest unknown is whether Paperback source extensions receive reliable completed-read actions
-for the Kavita source itself. Current live evidence says they do not. The mock bridge now proves only
-the independent iOS/Paperback-to-bridge network path through the settings action.
+The riskiest unknown was whether Paperback source extensions receive reliable completed-read actions
+for the Kavita source itself. Current live evidence says they do not. The mock bridge settings
+action proves only the independent iOS/Paperback-to-bridge network path. The Progress Bridge tracker
+then isolates the next boundary: whether Paperback dispatches queued read actions to an associated
+progress provider.
 
 This mock bridge does not update MAL. It is intentionally dependency-free and Docker-hostable so it
 can be run beside Kavita during device testing.
 
 ## Event Shape
 
-Events are sanitized and contain only IDs and metadata needed by the later bridge:
+Events are sanitized and contain only IDs and metadata needed by the later bridge. Kavita-source
+diagnostic events include:
 
 - Paperback action id
 - Paperback manga/chapter id
@@ -62,6 +74,16 @@ Events are sanitized and contain only IDs and metadata needed by the later bridg
 - listing mode, role, segment index/count
 - whether the event should mark Kavita read
 - whether Kavita was marked read
+
+Generic tracker events include:
+
+- Paperback action id
+- tracking target id
+- original `chapterSourceId`
+- original `chapterMangaId`
+- original Paperback chapter id
+- chapter and volume numbers seen by Paperback
+- title metadata supplied in the read action
 
 Events must not contain:
 
@@ -115,6 +137,17 @@ Expected result:
 - the bridge receives one synthetic diagnostic event.
 
 This proves network reachability only.
+
+To test real queued read actions through the tracker/provider surface:
+
+1. Install **Mutsuki Progress Bridge**.
+2. Configure its Progress bridge URL and token.
+3. Associate a test title with Mutsuki Progress Bridge using Paperback's tracker workflow.
+4. Complete a chapter from any source.
+5. Look for `[MutsukiBridgeQueue] ENTER` in Paperback logs.
+6. Open the mock bridge UI and confirm the event shows the original source and chapter id.
+
+This proves tracker queue delivery. It does not prove source self-notification.
 
 To test the blocked read-event boundary:
 

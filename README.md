@@ -2,14 +2,17 @@
 
 Mutsuki is a Paperback 0.9 extension repository for self-hosted Kavita libraries and MyAnimeList progress tracking.
 
-It contains two separately installable extensions:
+It contains three separately installable extensions:
 
 - **Mutsuki Kavita**: browse/search Kavita, read image-based manga/PDF pages, and render EPUB light novels as Paperback HTML chapters.
 - **Mutsuki MyAnimeList**: authenticate with MAL, link titles through Paperback's tracker workflow, and update chapter/volume progress without regressions.
+- **Mutsuki Progress Bridge**: diagnostic tracker/provider that forwards Paperback queued read actions to the local mock bridge.
 
 It also includes a development-only mock progress bridge at `apps/mock-progress-bridge`. The bridge
-is currently diagnostic: it can prove Paperback-to-bridge networking from a settings action, but
-automatic read-completion delivery from Paperback to the original Kavita source is not proven.
+is currently diagnostic: it can prove Paperback-to-bridge networking from a settings action and can
+display queued read actions forwarded by the Mutsuki Progress Bridge tracker. Automatic
+read-completion delivery from Paperback to the original Kavita source is not available in the
+observed runtime.
 
 ## Supported Formats
 
@@ -69,6 +72,13 @@ callback to the original source or to an automatically associated provider.
 
 The settings action **Send mock bridge test event** posts one synthetic diagnostic event to the mock
 bridge. It only proves iOS/Paperback networking to the bridge; it is not a read-sync solution.
+
+The **Mutsuki Progress Bridge** tracker is the supported diagnostic path for actual queued read
+actions. It can receive `TrackedMangaChapterReadAction` items from Paperback for titles associated
+with that tracker and forward sanitized events to the mock bridge. This is useful for proving tracker
+queue behavior and for future cross-source bridge work, including MangaDex or other installed
+sources. It still depends on Paperback associating the title with the tracker; it does not solve the
+rejected per-title manual-linking problem by itself.
 
 Run the mock bridge:
 

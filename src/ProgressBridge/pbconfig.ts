@@ -1,29 +1,22 @@
 import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/types";
 
 export default {
-  name: "Mutsuki Kavita",
-  description: "Connects Paperback to Kavita for manga, PDFs, and EPUB light novels.",
-  version: "0.1.14",
+  name: "Mutsuki Progress Bridge",
+  description: "Diagnostic tracker that forwards Paperback read-action queue events to a bridge.",
+  version: "0.1.0",
   icon: "icon.png",
   language: "en",
   contentRating: ContentRating.EVERYONE,
   capabilities: [
-    SourceIntents.DISCOVER_SECTION_PROVIDING,
-    SourceIntents.SEARCH_RESULT_PROVIDING,
-    SourceIntents.CHAPTER_PROVIDING,
     SourceIntents.PROGRESS_PROVIDING,
     SourceIntents.SETTINGS_FORM_PROVIDING,
+    SourceIntents.SEARCH_RESULT_PROVIDING,
   ],
   badges: [
     {
-      label: "Kavita",
+      label: "Tracker",
       textColor: "#ffffff",
-      backgroundColor: "#2f6f73",
-    },
-    {
-      label: "Novel",
-      textColor: "#111827",
-      backgroundColor: "#e4d8ba",
+      backgroundColor: "#10b981",
     },
   ],
   developers: [

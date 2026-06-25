@@ -62,10 +62,14 @@ names on the bundled Kavita runtime object.
 
 ## Live Runtime Evidence
 
-Observed across three Paperback 0.9 debug sessions:
+Observed across four Paperback 0.9 debug sessions:
 
 - Mutsuki Kavita v0.1.11 loads successfully.
 - Generated capabilities are `[4, 64, 1, 2, 32]`.
+- Mutsuki Kavita v0.1.13 logs `[MutsukiProgressRuntime]` with all three progress-provider methods
+  present on the exported runtime object.
+- The settings action sends a diagnostic mock bridge event successfully, proving
+  iOS/Paperback-to-bridge HTTP transport.
 - Paperback logs ordinary image-based manga chapters as complete.
 - Paperback updates local chapter progress and continues to the next chapter.
 - Paperback startup logs include `Found 0 items` and `Empty results returned;
@@ -145,13 +149,22 @@ content source solely because that source advertises `PROGRESS_PROVIDING`.
 If explicit per-title tracker linking is required, it does not satisfy
 Mutsuki's automatic workflow requirement.
 
+Mutsuki now also ships a separate `Mutsuki Progress Bridge` progress provider.
+That extension is intentionally a tracker/provider diagnostic surface rather
+than a content source. It can forward queued read actions from any source to the
+mock bridge when Paperback associates the title with that tracker. It is useful
+for proving cross-source queue delivery and event shape, but it does not remove
+the manual association limitation.
+
 ## Viable Alternatives
 
 1. Upstream Paperback feature or app fork that emits a source-level
    chapter-completed callback with the original source chapter id.
 2. A companion progress provider only if Paperback can automatically associate
    it with Mutsuki Kavita titles without per-title linking.
-3. Explicit tracker linking. This is technically possible but rejected as the
+3. Mutsuki Progress Bridge as a diagnostic tracker for linked titles and
+   cross-source queue testing.
+4. Explicit tracker linking. This is technically possible but rejected as the
    primary workflow because it recreates the manual linking problem.
 
 ## Diagnostic Build Markers
