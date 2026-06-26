@@ -3,6 +3,20 @@ import type { KavitaSeriesCandidate, MalSearchCandidate } from "./matching.js";
 import type { MalListProgress } from "./policy.js";
 import type { BridgeKavitaClient, BridgeMalClient, BridgeObservedSeries } from "./sync.js";
 
+export interface KavitaReadinessResult {
+  configured: boolean;
+  ok: boolean;
+  seriesSeen?: number;
+  message?: string;
+}
+
+export interface MalReadinessResult {
+  oauthConfigured: boolean;
+  authorized: boolean;
+  ok: boolean;
+  message?: string;
+}
+
 export function createKavitaClient(config: BridgeConfig): BridgeKavitaClient {
   const baseUrl = normalizeBaseUrl(config.kavitaBaseUrl);
   return {
@@ -85,6 +99,47 @@ export function createMalClient(config: BridgeConfig): BridgeMalClient {
       };
     },
   };
+}
+
+export async function checkKavitaReadiness(config: BridgeConfig): Promise<KavitaReadinessResult> {
+  if (!config.kavitaBaseUrl || !config.kavitaApiKey) {
+    return { configured: false, ok: false, message: "Kavita URL or API key is not configured." };
+  }
+  try {
+    const series = await createKavitaClient(config).listSeries();
+    return { configured: true, ok: true, seriesSeen: series.length };
+  } catch (error) {
+    return {
+      configured: true,
+      ok: false,
+      message:
+        error instanceof Error ? sanitizeReadinessMessage(error.message) : "Kavita check failed.",
+    };
+  }
+}
+
+export async function checkMalReadiness(config: BridgeConfig): Promise<MalReadinessResult> {
+  const oauthConfigured = Boolean(config.malClientId && config.malRedirectUri);
+  if (!config.malAccessToken) {
+    return {
+      oauthConfigured,
+      authorized: false,
+      ok: false,
+      message: "MAL OAuth token is not configured.",
+    };
+  }
+  try {
+    await malJson(config.malAccessToken, "https://api.myanimelist.net/v2/users/@me", "GET");
+    return { oauthConfigured, authorized: true, ok: true };
+  } catch (error) {
+    return {
+      oauthConfigured,
+      authorized: true,
+      ok: false,
+      message:
+        error instanceof Error ? sanitizeReadinessMessage(error.message) : "MAL check failed.",
+    };
+  }
 }
 
 async function kavitaJson(
@@ -263,4 +318,11 @@ function externalIds(record: Record<string, unknown>): Record<string, string | n
 function yearFromDate(value: string | undefined): number | undefined {
   const match = /^(\d{4})/u.exec(value ?? "");
   return match?.[1] ? Number(match[1]) : undefined;
+}
+
+function sanitizeReadinessMessage(message: string): string {
+  return message
+    .replace(/Bearer\s+\S+/giu, "Bearer redacted")
+    .replace(/x-api-key[:=]\s*[^&\s"')<>]+/giu, "x-api-key=redacted")
+    .slice(0, 200);
 }

@@ -16,6 +16,8 @@ read-action feasibility tests.
 - Deterministic MAL matching from existing Kavita MAL URLs/IDs.
 - Strict high-confidence title matching.
 - Review queue and manual approval controls for ambiguous or low-confidence matches.
+- Manual override controls for existing mappings, offsets, and tracking policies.
+- Readiness checks for Kavita metadata extraction and MAL OAuth authorization.
 - Manga defaults to chapter-and-volume tracking.
 - Light novels default to volume-only tracking.
 - Monotonic high-water MAL update planning with offsets.
@@ -58,11 +60,13 @@ http://192.168.50.138:6768/api/mal/oauth/callback
 ```
 
 After saving the MAL client settings, use **Authorize MAL** on the bridge page. Keep dry-run enabled
-until the UI shows the expected mappings and queued updates.
+until the UI shows the expected mappings and queued updates. Use **Check readiness** to verify the
+configured Kavita endpoint can be queried and the stored MAL token is accepted before running a sync.
 
 ## API
 
 - `GET /api/status`
+- `GET /api/readiness`
 - `GET /api/unresolved-matches`
 - `GET /api/audit-log`
 - `POST /api/sync/run`
@@ -70,6 +74,7 @@ until the UI shows the expected mappings and queued updates.
 - `GET /api/mal/oauth/start`
 - `GET /api/mal/oauth/callback`
 - `POST /api/unresolved-matches/:kavitaSeriesId/approve`
+- `POST /api/mappings/:kavitaSeriesId`
 
 ## Unraid Notes
 

@@ -2,7 +2,14 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
-import { createKavitaClient, createMalClient } from "./clients.js";
+import {
+  checkKavitaReadiness,
+  checkMalReadiness,
+  createKavitaClient,
+  createMalClient,
+  type KavitaReadinessResult,
+  type MalReadinessResult,
+} from "./clients.js";
 import { bridgeConfigFromEnv } from "./config.js";
 import {
   buildMalAuthorizationRequest,
@@ -20,6 +27,12 @@ export interface KavitaMalBridgeServerOptions {
   dryRun: boolean;
   runSync: () => Promise<BridgeSyncResult>;
   oauthTransport?: OAuthTransport;
+  checkReadiness?: () => Promise<BridgeReadinessResult>;
+}
+
+export interface BridgeReadinessResult {
+  kavita: KavitaReadinessResult;
+  mal: MalReadinessResult;
 }
 
 export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOptions): Server {
@@ -51,6 +64,10 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       }
       if (request.method === "GET" && url.pathname === "/api/audit-log") {
         await respondJson(response, { items: await options.store.listAuditLogs(100) });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/readiness") {
+        await respondJson(response, await readiness(options));
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/sync/run") {
@@ -111,6 +128,25 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         await respondJson(response, { ok: true });
         return;
       }
+      const mappingOverride = /^\/api\/mappings\/(\d+)$/u.exec(url.pathname);
+      if (request.method === "POST" && mappingOverride?.[1]) {
+        const kavitaSeriesId = Number(mappingOverride[1]);
+        const existing = await options.store.getSeriesMapping(kavitaSeriesId);
+        if (!existing) {
+          await respondJson(response, { error: "Mapping not found." }, 404);
+          return;
+        }
+        const body = parseJsonRecord(await readRequestBody(request));
+        const mapping = mappingFromOverride(existing, body);
+        await options.store.upsertSeriesMapping(mapping);
+        await options.store.audit({
+          type: "match",
+          kavitaSeriesId,
+          message: `Manual MAL mapping override saved for ${mapping.malId}.`,
+        });
+        await respondJson(response, { ok: true, mapping });
+        return;
+      }
       const approveMatch = /^\/api\/unresolved-matches\/(\d+)\/approve$/u.exec(url.pathname);
       if (request.method === "POST" && approveMatch?.[1]) {
         const kavitaSeriesId = Number(approveMatch[1]);
@@ -135,6 +171,17 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       );
     }
   });
+}
+
+async function readiness(options: KavitaMalBridgeServerOptions): Promise<BridgeReadinessResult> {
+  if (options.checkReadiness) return options.checkReadiness();
+  const baseConfig = bridgeConfigFromEnv(process.env);
+  const config = await effectiveBridgeConfig(baseConfig, options.store);
+  const [kavita, mal] = await Promise.all([
+    checkKavitaReadiness(config),
+    checkMalReadiness(config),
+  ]);
+  return { kavita, mal };
 }
 
 async function saveSettings(
@@ -183,6 +230,26 @@ function mappingFromApproval(
     lastObservedVolume: 0,
     lastPushedChapter: 0,
     lastPushedVolume: 0,
+  };
+}
+
+function mappingFromOverride(
+  existing: SeriesMappingRecord,
+  body: Record<string, unknown>,
+): SeriesMappingRecord {
+  const malId = numberBodyField(body, "malId");
+  if (malId === undefined || !Number.isSafeInteger(malId) || malId <= 0) {
+    throw new Error("Invalid MAL id.");
+  }
+  return {
+    ...existing,
+    malId,
+    matchMethod: "manual-override",
+    confidence: 1,
+    locked: typeof body.locked === "boolean" ? body.locked : true,
+    chapterOffset: Math.floor(numberBodyField(body, "chapterOffset") ?? existing.chapterOffset),
+    volumeOffset: Math.floor(numberBodyField(body, "volumeOffset") ?? existing.volumeOffset),
+    trackingMode: trackingModeBodyField(body.trackingMode),
   };
 }
 
@@ -256,7 +323,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
 </head>
 <body>
   <h1>Mutsuki Kavita MAL Bridge</h1>
-  <p class="muted">Mode: <strong>${effectiveDryRun ? "dry-run" : "live MAL writes"}</strong> · MAL: <strong>${tokens ? "authorized" : "not authorized"}</strong></p>
+  <p class="muted">Mode: <strong>${effectiveDryRun ? "dry-run" : "live MAL writes"}</strong> - MAL: <strong>${tokens ? "authorized" : "not authorized"}</strong></p>
   <h2>Setup</h2>
   <form class="panel" id="settings-form" data-endpoint="/api/settings">
     <div class="row">
@@ -288,10 +355,15 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <button type="submit">Save settings</button>
     <a class="button" href="/api/mal/oauth/start">Authorize MAL</a>
     <button type="button" id="run-sync">Run sync now</button>
+    <button type="button" id="check-readiness">Check readiness</button>
     <p class="muted" id="form-status"></p>
   </form>
   <h2>Mappings</h2>
   <p>${mappings.length} linked Kavita series.</p>
+  <table>
+    <thead><tr><th>Kavita Series</th><th>MAL ID</th><th>Policy</th><th>Offsets</th><th>Override</th></tr></thead>
+    <tbody>${mappings.map((mapping) => renderMappingRow(mapping)).join("")}</tbody>
+  </table>
   <h2>Unresolved Matches</h2>
   <table>
     <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Approve</th></tr></thead>
@@ -313,6 +385,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       if (data.malId) data.malId = Number(data.malId);
       if (data.chapterOffset) data.chapterOffset = Number(data.chapterOffset);
       if (data.volumeOffset) data.volumeOffset = Number(data.volumeOffset);
+      if (data.locked) data.locked = data.locked === "true";
       return data;
     }
     document.querySelector("#settings-form").addEventListener("submit", async (event) => {
@@ -328,6 +401,13 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       const response = await fetch("/api/sync/run", { method: "POST" });
       status.textContent = response.ok ? "Sync requested." : "Sync failed.";
     });
+    document.querySelector("#check-readiness").addEventListener("click", async () => {
+      const response = await fetch("/api/readiness");
+      const result = response.ok ? await response.json() : undefined;
+      status.textContent = result
+        ? "Kavita: " + (result.kavita.ok ? "ok" : "not ready") + ", MAL: " + (result.mal.ok ? "ok" : "not ready")
+        : "Readiness check failed.";
+    });
     for (const form of document.querySelectorAll(".approval-form")) {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -339,9 +419,49 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
         status.textContent = response.ok ? "Mapping approved." : "Approval failed.";
       });
     }
+    for (const form of document.querySelectorAll(".mapping-form")) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch(event.currentTarget.dataset.endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formJson(event.currentTarget)),
+        });
+        status.textContent = response.ok ? "Mapping override saved." : "Mapping override failed.";
+      });
+    }
   </script>
 </body>
 </html>`;
+}
+
+function renderMappingRow(mapping: SeriesMappingRecord): string {
+  return `<tr><td>${mapping.kavitaSeriesId}</td><td>${mapping.malId}</td><td>${escapeHtml(mapping.trackingMode)}</td><td>chapter ${mapping.chapterOffset}, volume ${mapping.volumeOffset}</td><td>
+    <form class="mapping-form" data-endpoint="/api/mappings/${mapping.kavitaSeriesId}">
+      <input name="malId" type="number" min="1" value="${mapping.malId}" />
+      <select name="trackingMode">
+        ${trackingModeOption("chapter-and-volume", mapping.trackingMode, "chapter and volume")}
+        ${trackingModeOption("chapter-only", mapping.trackingMode, "chapter only")}
+        ${trackingModeOption("volume-only", mapping.trackingMode, "volume only")}
+        ${trackingModeOption("disabled", mapping.trackingMode, "disabled")}
+      </select>
+      <input name="chapterOffset" type="number" step="1" value="${mapping.chapterOffset}" />
+      <input name="volumeOffset" type="number" step="1" value="${mapping.volumeOffset}" />
+      <select name="locked">
+        <option value="true"${mapping.locked ? " selected" : ""}>locked</option>
+        <option value="false"${!mapping.locked ? " selected" : ""}>auto</option>
+      </select>
+      <button type="submit">Save</button>
+    </form>
+  </td></tr>`;
+}
+
+function trackingModeOption(
+  value: BridgeTrackingMode,
+  current: BridgeTrackingMode,
+  label: string,
+): string {
+  return `<option value="${value}"${value === current ? " selected" : ""}>${label}</option>`;
 }
 
 function renderReviewRow(

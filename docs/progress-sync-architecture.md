@@ -108,7 +108,9 @@ includes:
 - MAL OAuth authorization, access/refresh-token persistence, and pre-sync token refresh;
 - deterministic MAL ID/URL matching from existing Kavita external metadata;
 - high-confidence fallback search matching;
-- unresolved match review and manual approval UI/API;
+- unresolved match review, manual approval, and existing-mapping override UI/API;
+- Kavita/MAL readiness checks which verify Kavita metadata extraction and MAL OAuth authorization
+  without mutating progress;
 - monotonic high-water progress updates;
 - offsets and tracking policies;
 - retry/outbox tables for MAL writes;
@@ -116,8 +118,7 @@ includes:
 - audit logging.
 
 The next hardening pass should validate the exact Kavita user-library progress DTOs against the live
-server and then broaden the Web UI for editing existing mappings, offsets, tracking modes, and
-disabled titles.
+server and then improve the Web UI around filtering, searching, and bulk-editing mappings.
 
 Default policies:
 
