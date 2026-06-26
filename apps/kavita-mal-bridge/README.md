@@ -13,7 +13,7 @@ read-action feasibility tests.
 - Local setup UI for Kavita, MAL OAuth client settings, dry-run mode, and poll interval.
 - MAL OAuth callback handling with persisted access/refresh tokens.
 - Token refresh before scheduled/manual sync runs.
-- Deterministic MAL matching from existing Kavita MAL URLs/IDs.
+- Deterministic MAL matching from existing Kavita MAL URLs/IDs and AniList IDs/links.
 - Strict high-confidence title matching.
 - Review queue and manual approval controls for ambiguous or low-confidence matches.
 - Manual override controls for existing mappings, offsets, and tracking policies.

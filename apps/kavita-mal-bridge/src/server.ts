@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import {
   checkKavitaReadiness,
   checkMalReadiness,
+  createExternalIdResolver,
   createKavitaClient,
   createMalClient,
   type KavitaReadinessResult,
@@ -573,7 +574,13 @@ async function startFromEnv(): Promise<void> {
     assertBridgeSyncReady(config);
     const kavita = createKavitaClient(config);
     const mal = createMalClient(config);
-    return runBridgeSyncOnce({ store, kavita, mal, dryRun: config.dryRun });
+    return runBridgeSyncOnce({
+      store,
+      kavita,
+      mal,
+      externalIdResolver: createExternalIdResolver(),
+      dryRun: config.dryRun,
+    });
   };
   const initialConfig = await effectiveBridgeConfig(baseConfig, store);
   const scheduler = new BridgeScheduler({

@@ -1,7 +1,12 @@
 import type { BridgeConfig } from "./config.js";
 import type { KavitaSeriesCandidate, MalSearchCandidate } from "./matching.js";
 import type { MalListProgress } from "./policy.js";
-import type { BridgeKavitaClient, BridgeMalClient, BridgeObservedSeries } from "./sync.js";
+import type {
+  BridgeExternalIdResolver,
+  BridgeKavitaClient,
+  BridgeMalClient,
+  BridgeObservedSeries,
+} from "./sync.js";
 
 export interface KavitaReadinessResult {
   configured: boolean;
@@ -126,6 +131,17 @@ export function createMalClient(config: BridgeConfig): BridgeMalClient {
   };
 }
 
+export function createExternalIdResolver(): BridgeExternalIdResolver {
+  return {
+    async resolveMalId(series) {
+      const aniListId = aniListIdFromSeries(series);
+      if (aniListId === undefined) return undefined;
+      const malId = await resolveAniListMalId(aniListId).catch(() => undefined);
+      return malId === undefined ? undefined : { malId, matchMethod: "external-id", confidence: 1 };
+    },
+  };
+}
+
 export async function checkKavitaReadiness(config: BridgeConfig): Promise<KavitaReadinessResult> {
   if (!config.kavitaBaseUrl || !config.kavitaApiKey) {
     return { configured: false, ok: false, message: "Kavita URL or API key is not configured." };
@@ -205,6 +221,24 @@ async function malJson(accessToken: string, url: string, method: "GET"): Promise
   });
   if (!response.ok) throw new Error(`MAL request failed with status ${response.status}.`);
   return response.json();
+}
+
+async function resolveAniListMalId(aniListId: number): Promise<number | undefined> {
+  const response = await fetch("https://graphql.anilist.co", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      query: "query ($id: Int) { Media(id: $id, type: MANGA) { idMal } }",
+      variables: { id: aniListId },
+    }),
+  });
+  if (!response.ok) return undefined;
+  const json = await response.json();
+  const media = isRecord(json) && isRecord(json.data) ? json.data.Media : undefined;
+  return isRecord(media) ? positiveNumberField(media, "idMal") : undefined;
 }
 
 function observedSeriesFromKavita(record: unknown): BridgeObservedSeries[] {
@@ -508,7 +542,30 @@ function externalIds(record: Record<string, unknown>): Record<string, string | n
     mal: source.malId as string | number | undefined,
     myanimelist: source.myAnimeListId as string | number | undefined,
     anilist: source.aniListId as string | number | undefined,
+    isbn: source.isbn as string | number | undefined,
+    isbn10: source.isbn10 as string | number | undefined,
+    isbn13: source.isbn13 as string | number | undefined,
   };
+}
+
+function aniListIdFromSeries(series: KavitaSeriesCandidate): number | undefined {
+  const direct = positiveIntegerFromUnknown(
+    series.externalIds?.anilist ?? series.externalIds?.aniListId,
+  );
+  if (direct !== undefined) return direct;
+  for (const link of series.webLinks ?? []) {
+    const match = /anilist\.co\/manga\/(\d+)/iu.exec(link);
+    const id = positiveIntegerFromUnknown(match?.[1]);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
+function positiveIntegerFromUnknown(value: string | number | undefined): number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+  if (typeof value !== "string") return undefined;
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function yearFromDate(value: string | undefined): number | undefined {

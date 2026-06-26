@@ -107,6 +107,7 @@ includes:
   settings;
 - MAL OAuth authorization, access/refresh-token persistence, and pre-sync token refresh;
 - deterministic MAL ID/URL matching from existing Kavita external metadata;
+- deterministic AniList ID/link resolution to MAL IDs when Kavita already has AniList metadata;
 - high-confidence fallback search matching;
 - unresolved match review, manual approval, and existing-mapping override UI/API;
 - lightweight Kavita readiness checks and MAL OAuth authorization checks without mutating progress;

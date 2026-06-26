@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   checkKavitaReadiness,
   checkMalReadiness,
+  createExternalIdResolver,
   createKavitaClient,
 } from "../../apps/kavita-mal-bridge/src/clients.js";
 import { bridgeConfigFromEnv } from "../../apps/kavita-mal-bridge/src/config.js";
@@ -342,6 +343,52 @@ test("MAL readiness verifies the stored OAuth token without leaking it in failur
     assert.equal(result.authorized, true);
     assert.equal(result.ok, false);
     assert.doesNotMatch(JSON.stringify(result), /secret-mal-token/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("external id resolver maps AniList metadata and links to MAL ids", async () => {
+  const originalFetch = globalThis.fetch;
+  const seenIds: number[] = [];
+  try {
+    globalThis.fetch = async (input, init) => {
+      const url =
+        input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+      assert.equal(url, "https://graphql.anilist.co");
+      assert.equal(init?.method, "POST");
+      const bodyText = typeof init?.body === "string" ? init.body : "";
+      const body = JSON.parse(bodyText) as { variables?: { id?: number } };
+      const id = body.variables?.id;
+      if (typeof id !== "number") throw new Error("AniList GraphQL request omitted numeric id.");
+      seenIds.push(id);
+      return new Response(JSON.stringify({ data: { Media: { idMal: id === 321 ? 654 : 987 } } }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+
+    const resolver = createExternalIdResolver();
+    const fromMetadata = await resolver.resolveMalId({
+      kavitaSeriesId: 1,
+      title: "AniList Metadata Story",
+      contentType: "manga",
+      externalIds: { anilist: 321 },
+      isSpecial: false,
+    });
+    const fromLink = await resolver.resolveMalId({
+      kavitaSeriesId: 2,
+      title: "AniList Link Story",
+      contentType: "manga",
+      webLinks: ["https://anilist.co/manga/777/AniList-Link-Story/"],
+      isSpecial: false,
+    });
+
+    assert.deepEqual(seenIds, [321, 777]);
+    assert.equal(fromMetadata?.malId, 654);
+    assert.equal(fromMetadata?.matchMethod, "external-id");
+    assert.equal(fromMetadata?.confidence, 1);
+    assert.equal(fromLink?.malId, 987);
   } finally {
     globalThis.fetch = originalFetch;
   }

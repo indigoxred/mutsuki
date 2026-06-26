@@ -97,3 +97,53 @@ test("sync places ambiguous title matches into review without writing MAL", asyn
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("sync auto-links deterministic external metadata before fuzzy title search", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-sync-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const kavita: BridgeKavitaClient = {
+    listSeries: async () => [
+      {
+        kavitaSeriesId: 18,
+        title: "External Metadata Story",
+        contentType: "manga",
+        externalIds: { anilist: 123456 },
+        completedChapter: 4,
+        completedVolume: 1,
+        isSpecial: false,
+      },
+    ],
+  };
+  const mal: BridgeMalClient = {
+    searchManga: async () => {
+      throw new Error("should not run fuzzy search after deterministic external match");
+    },
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => ({ ok: true }),
+  };
+
+  try {
+    const result = await runBridgeSyncOnce({
+      store,
+      kavita,
+      mal,
+      dryRun: true,
+      externalIdResolver: {
+        resolveMalId: async () => ({ malId: 654321, matchMethod: "external-id", confidence: 1 }),
+      },
+    });
+
+    const mapping = await store.getSeriesMapping(18);
+    assert.equal(result.autoMatched, 1);
+    assert.equal(mapping?.malId, 654321);
+    assert.equal(mapping?.matchMethod, "external-id");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

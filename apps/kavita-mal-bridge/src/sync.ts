@@ -2,6 +2,7 @@ import {
   matchKavitaSeriesToMal,
   type KavitaSeriesCandidate,
   type MalSearchCandidate,
+  type MatchMethod,
 } from "./matching.js";
 import { enqueueMalUpdate, processOutboxOnce } from "./outbox.js";
 import {
@@ -33,6 +34,12 @@ export interface BridgeMalClient {
   ): Promise<{ ok: true } | { ok: false; retryable: boolean; message?: string }>;
 }
 
+export interface BridgeExternalIdResolver {
+  resolveMalId(
+    series: BridgeObservedSeries,
+  ): Promise<{ malId: number; matchMethod: MatchMethod; confidence: number } | undefined>;
+}
+
 export interface BridgeSyncResult {
   seriesSeen: number;
   autoMatched: number;
@@ -47,6 +54,7 @@ export async function runBridgeSyncOnce(input: {
   store: SqliteBridgeStore;
   kavita: BridgeKavitaClient;
   mal: BridgeMalClient;
+  externalIdResolver?: BridgeExternalIdResolver;
   dryRun: boolean;
 }): Promise<BridgeSyncResult> {
   const result: BridgeSyncResult = {
@@ -65,7 +73,7 @@ export async function runBridgeSyncOnce(input: {
   for (const item of series) {
     let mapping = await input.store.getSeriesMapping(item.kavitaSeriesId);
     if (!mapping) {
-      mapping = await createMappingOrReview(input.store, input.mal, item);
+      mapping = await createMappingOrReview(input.store, input.mal, item, input.externalIdResolver);
       if (!mapping) {
         result.reviewQueued++;
         continue;
@@ -116,8 +124,20 @@ async function createMappingOrReview(
   store: SqliteBridgeStore,
   mal: BridgeMalClient,
   series: BridgeObservedSeries,
+  externalIdResolver: BridgeExternalIdResolver | undefined,
 ): Promise<SeriesMappingRecord | undefined> {
   let decision = matchKavitaSeriesToMal({ series, searchCandidates: [] });
+  if (decision.status === "review" && decision.reason === "no-candidates" && externalIdResolver) {
+    const externalMatch = await externalIdResolver.resolveMalId(series).catch(() => undefined);
+    if (externalMatch) {
+      decision = {
+        status: "matched",
+        malId: externalMatch.malId,
+        matchMethod: externalMatch.matchMethod,
+        confidence: externalMatch.confidence,
+      };
+    }
+  }
   if (decision.status === "review" && decision.reason === "no-candidates") {
     decision = matchKavitaSeriesToMal({
       series,
