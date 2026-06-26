@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>mutsuki-kavita-mal-bridge</Name>
+  <Repository>ghcr.io/indigoxred/mutsuki/kavita-mal-bridge:latest</Repository>
+  <Registry>https://github.com/indigoxred/mutsuki/pkgs/container/mutsuki%2Fkavita-mal-bridge</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/indigoxred/mutsuki/issues</Support>
+  <Project>https://github.com/indigoxred/mutsuki</Project>
+  <ReadMe>https://github.com/indigoxred/mutsuki/blob/main/apps/kavita-mal-bridge/README.md</ReadMe>
+  <Overview>Mutsuki Kavita MAL Bridge polls Kavita as the progress source of truth, maps Kavita series to MyAnimeList, and queues monotonic MAL progress updates through SQLite. Keep dry-run enabled until mappings and outbox updates look correct.</Overview>
+  <Category>MediaApp:Books Tools:Utilities</Category>
+  <WebUI>http://[IP]:[PORT:6768]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/indigoxred/mutsuki/main/templates/unraid/mutsuki-kavita-mal-bridge.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/indigoxred/mutsuki/main/src/ProgressBridge/static/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled>1782514800</DateInstalled>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="Web UI Port" Target="6768" Default="6768" Mode="tcp" Description="Host port for the bridge Web UI. Container port is 6768." Type="Port" Display="always" Required="true" Mask="false">6768</Config>
+  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/mutsuki-kavita-mal-bridge" Mode="rw" Description="Persistent bridge storage for SQLite, OAuth tokens, mappings, outbox, and audit logs." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/mutsuki-kavita-mal-bridge</Config>
+  <Config Name="Internal Port" Target="PORT" Default="6768" Mode="" Description="Internal HTTP port used by the bridge process. Keep this at 6768 unless you also change the port mapping." Type="Variable" Display="advanced" Required="true" Mask="false">6768</Config>
+  <Config Name="Database Path" Target="MUTSUKI_BRIDGE_DB" Default="/data/mutsuki-bridge.sqlite" Mode="" Description="SQLite database path inside the container." Type="Variable" Display="advanced" Required="true" Mask="false">/data/mutsuki-bridge.sqlite</Config>
+  <Config Name="Dry Run" Target="MUTSUKI_BRIDGE_DRY_RUN" Default="true" Mode="" Description="When true, planned MAL writes are previewed and left pending instead of being pushed." Type="Variable" Display="always" Required="true" Mask="false">true</Config>
+  <Config Name="Poll Interval Seconds" Target="MUTSUKI_BRIDGE_POLL_INTERVAL_SECONDS" Default="1800" Mode="" Description="Scheduled Kavita-to-MAL sync interval in seconds. Minimum is 60." Type="Variable" Display="always" Required="true" Mask="false">1800</Config>
+  <Config Name="Kavita Base URL" Target="KAVITA_BASE_URL" Default="" Mode="" Description="Optional bootstrap Kavita URL. This can also be saved in the bridge Web UI." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="Kavita API Key" Target="KAVITA_API_KEY" Default="" Mode="" Description="Optional bootstrap Kavita API/Auth key. This can also be saved in the bridge Web UI." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="MAL Client ID" Target="MAL_CLIENT_ID" Default="" Mode="" Description="Optional bootstrap MyAnimeList OAuth client ID. This can also be saved in the bridge Web UI." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="MAL Client Secret" Target="MAL_CLIENT_SECRET" Default="" Mode="" Description="Optional bootstrap MyAnimeList OAuth client secret. This can also be saved in the bridge Web UI." Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="MAL Redirect URI" Target="MAL_REDIRECT_URI" Default="" Mode="" Description="Optional bootstrap MAL redirect URI, for example http://192.168.50.138:6768/api/mal/oauth/callback." Type="Variable" Display="always" Required="false" Mask="false"/>
+  <Config Name="MAL Access Token" Target="MAL_ACCESS_TOKEN" Default="" Mode="" Description="Optional legacy direct MAL token. OAuth through the bridge Web UI is preferred." Type="Variable" Display="advanced" Required="false" Mask="true"/>
+</Container>

@@ -21,6 +21,21 @@ Suggested container name:
 mutsuki-kavita-mal-bridge
 ```
 
+The Unraid dockerMan template lives in:
+
+```text
+templates/unraid/mutsuki-kavita-mal-bridge.xml
+```
+
+Install it as:
+
+```text
+/boot/config/plugins/dockerMan/templates-user/my-mutsuki-kavita-mal-bridge.xml
+```
+
+That template supplies the WebUI right-click action and editable fields for all supported bridge
+environment variables.
+
 Use Unraid's **Add Container** form with these values:
 
 | Setting        | Value                                                 |
