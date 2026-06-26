@@ -23,10 +23,12 @@ test("scheduler prevents overlapping sync runs", async () => {
   const first = scheduler.runNow();
   const second = scheduler.runNow();
   release();
-  await Promise.all([first, second]);
+  const [firstResult, secondResult] = await Promise.all([first, second]);
 
   assert.equal(maxActive, 1);
-  assert.equal(scheduler.lastResult?.skipped, true);
+  assert.equal(firstResult.skipped, false);
+  assert.equal(secondResult.skipped, true);
+  assert.equal(scheduler.lastResult?.skipped, false);
 });
 
 test("scheduler can be rescheduled without losing its last result", async () => {

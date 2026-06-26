@@ -62,7 +62,7 @@ export class BridgeScheduler {
         startedAt,
         finishedAt: new Date().toISOString(),
       };
-      if (!this.lastResult?.skipped) this.lastResult = result;
+      this.lastResult = result;
       return result;
     } catch (error) {
       const result = {
@@ -71,7 +71,7 @@ export class BridgeScheduler {
         finishedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : "Unknown scheduler error.",
       };
-      if (!this.lastResult?.skipped) this.lastResult = result;
+      this.lastResult = result;
       return result;
     } finally {
       this.running = false;
