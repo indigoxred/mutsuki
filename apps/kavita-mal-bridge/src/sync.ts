@@ -44,6 +44,7 @@ export interface BridgeSyncResult {
   seriesSeen: number;
   autoMatched: number;
   reviewQueued: number;
+  reviewSkipped?: number;
   searchDeferred?: number;
   updatesQueued: number;
   outboxProcessed: number;
@@ -63,6 +64,7 @@ export async function runBridgeSyncOnce(input: {
     seriesSeen: 0,
     autoMatched: 0,
     reviewQueued: 0,
+    reviewSkipped: 0,
     searchDeferred: 0,
     updatesQueued: 0,
     outboxProcessed: 0,
@@ -73,11 +75,18 @@ export async function runBridgeSyncOnce(input: {
 
   const series = await input.kavita.listSeries();
   result.seriesSeen = series.length;
+  const reviewQueue = new Set(
+    (await input.store.listReviews()).map((review) => review.kavitaSeriesId),
+  );
 
   for (const item of series) {
     if (await input.store.isSeriesIgnored(item.kavitaSeriesId)) continue;
 
     let mapping = await input.store.getSeriesMapping(item.kavitaSeriesId);
+    if (!mapping && reviewQueue.has(item.kavitaSeriesId)) {
+      result.reviewSkipped = (result.reviewSkipped ?? 0) + 1;
+      continue;
+    }
     if (!mapping) {
       const mappingResult = await createMappingOrReview(
         input.store,

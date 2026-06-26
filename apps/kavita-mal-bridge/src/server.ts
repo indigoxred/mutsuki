@@ -697,6 +697,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
         + result.seriesSeen + " series, "
         + result.autoMatched + " auto-matched, "
         + result.reviewQueued + " review, "
+        + (result.reviewSkipped ?? 0) + " skipped, "
         + (result.searchDeferred ?? 0) + " deferred, "
         + result.updatesQueued + " queued, "
         + (result.outboxPreviewed ?? 0) + " previewed, "

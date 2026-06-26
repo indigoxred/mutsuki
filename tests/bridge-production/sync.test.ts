@@ -277,3 +277,60 @@ test("sync defers one series when MAL search has a retryable server failure", as
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("sync does not re-search series already waiting in the review queue", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-sync-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.enqueueReview({
+    kavitaSeriesId: 41,
+    title: "Already Needs Review",
+    reason: "ambiguous-or-low-confidence",
+    candidatesJson: "[]",
+  });
+  const kavita: BridgeKavitaClient = {
+    listSeries: async () => [
+      {
+        kavitaSeriesId: 41,
+        title: "Already Needs Review",
+        contentType: "manga",
+        completedChapter: 1,
+        completedVolume: 1,
+        isSpecial: false,
+      },
+      {
+        kavitaSeriesId: 42,
+        title: "Deterministic Later Series",
+        contentType: "manga",
+        webLinks: ["https://myanimelist.net/manga/888/Deterministic_Later_Series"],
+        completedChapter: 3,
+        completedVolume: 1,
+        isSpecial: false,
+      },
+    ],
+  };
+  const mal: BridgeMalClient = {
+    searchManga: async () => {
+      throw new Error("review-queued series should not be searched again");
+    },
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => ({ ok: true }),
+  };
+
+  try {
+    const result = await runBridgeSyncOnce({ store, kavita, mal, dryRun: true });
+
+    assert.equal(result.seriesSeen, 2);
+    assert.equal(result.reviewSkipped, 1);
+    assert.equal(result.autoMatched, 1);
+    assert.equal((await store.listReviews()).length, 1);
+    assert.equal((await store.getSeriesMapping(42))?.malId, 888);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
