@@ -84,3 +84,6 @@ bridge will not poll the full library for mappings until MAL is authorized.
 
 Use container port `6768` and map it to host port `6768` or another free host port. Store
 `/data` on persistent appdata storage so the SQLite database survives container upgrades.
+
+The detailed Unraid template and first-run checklist lives in
+`../../docs/unraid-docker.md`.

@@ -117,6 +117,8 @@ database path configured; use the local setup page to save the Kavita URL/API ke
 details, poll interval, and dry-run mode. MAL access and refresh tokens are stored in SQLite after
 OAuth authorization and refreshed before scheduled sync runs.
 
+For Unraid or persistent Docker deployment, see `docs/unraid-docker.md`.
+
 ## Development
 
 ```bash
