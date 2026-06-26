@@ -97,12 +97,13 @@ Events must not contain:
 
 ## Future Production Bridge
 
-The production bridge should be a separate package that builds on this event/progress model but uses
-Kavita as the source of truth by polling Kavita progress. It should include:
+The Phase 2 bridge foundation lives in `apps/kavita-mal-bridge`. It builds on this
+event/progress model but uses Kavita as the source of truth by polling Kavita progress. It currently
+includes:
 
 - SQLite storage;
-- Kavita API polling for libraries, series, metadata, and read progress;
-- MAL OAuth;
+- Kavita API polling for series metadata and observed progress fields;
+- MAL API access through an OAuth bearer token supplied by configuration;
 - deterministic MAL ID/URL matching from existing Kavita external metadata;
 - high-confidence fallback search matching;
 - unresolved match review UI/API;
@@ -110,6 +111,10 @@ Kavita as the source of truth by polling Kavita progress. It should include:
 - offsets and tracking policies;
 - retry/outbox tables for MAL writes;
 - audit logging.
+
+The next hardening pass should add an in-app MAL OAuth setup flow with refresh-token persistence and
+expand Kavita progress extraction once the exact user-library progress DTOs are validated against the
+live server.
 
 Default policies:
 

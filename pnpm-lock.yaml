@@ -37,6 +37,8 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  apps/kavita-mal-bridge: {}
+
   apps/mock-progress-bridge: {}
 
 packages:

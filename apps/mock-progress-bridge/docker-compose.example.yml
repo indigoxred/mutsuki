@@ -7,7 +7,9 @@ services:
     #   dockerfile: apps/mock-progress-bridge/Dockerfile
     container_name: mutsuki-progress-bridge
     ports:
-      - "8080:8080"
+      # Host port 6767 avoids common conflicts with qBittorrent's 8080 web UI.
+      # The container still listens on 8080 internally.
+      - "6767:8080"
     environment:
       PORT: "8080"
       MUTSUKI_BRIDGE_DATA: /data/events.jsonl

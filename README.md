@@ -8,11 +8,17 @@ It contains three separately installable extensions:
 - **Mutsuki MyAnimeList**: authenticate with MAL, link titles through Paperback's tracker workflow, and update chapter/volume progress without regressions.
 - **Mutsuki Progress Bridge**: diagnostic tracker/provider that forwards Paperback queued read actions to the local mock bridge.
 
-It also includes a development-only mock progress bridge at `apps/mock-progress-bridge`. The bridge
-is currently diagnostic: it can prove Paperback-to-bridge networking from a settings action and can
-display queued read actions forwarded by the Mutsuki Progress Bridge tracker. Automatic
-read-completion delivery from Paperback to the original Kavita source is not available in the
-observed runtime.
+It also includes two bridge apps:
+
+- `apps/mock-progress-bridge`: a diagnostic Phase 1 receiver which proves Paperback-to-bridge
+  networking and displays queued read actions forwarded by the Mutsuki Progress Bridge tracker.
+- `apps/kavita-mal-bridge`: the Phase 2 production bridge foundation which polls Kavita as the
+  progress source of truth, stores mappings/outbox/audit state in SQLite, and prepares monotonic MAL
+  updates.
+
+Automatic read-completion delivery from Paperback to the original Kavita source is not available in
+the observed runtime, so the production bridge currently depends on Kavita progress being updated by
+Kavita itself or a future proven Paperback callback path.
 
 ## Supported Formats
 
@@ -94,9 +100,19 @@ cd apps/mock-progress-bridge
 docker compose -f docker-compose.example.yml up
 ```
 
-Open `http://localhost:8080` to view received events. The full architecture and next bridge phase are
+Open `http://<docker-host-ip>:6767` to view received events when using the compose example. The full architecture and next bridge phase are
 documented in `docs/progress-sync-architecture.md`; the current read-event boundary is documented in
 `docs/paperback-read-event-blocker.md`.
+
+Run the Phase 2 Kavita-to-MAL bridge foundation:
+
+```bash
+cd apps/kavita-mal-bridge
+docker compose -f docker-compose.example.yml up
+```
+
+Open `http://<docker-host-ip>:6768`. Keep `MUTSUKI_BRIDGE_DRY_RUN=true` until the UI shows expected
+Kavita-to-MAL mappings and desired progress updates.
 
 ## Development
 
@@ -105,6 +121,7 @@ pnpm install
 pnpm run typecheck
 pnpm run test
 pnpm run bridge:mock:build
+pnpm run bridge:mal:build
 pnpm run bundle
 pnpm run dev
 pnpm run verify

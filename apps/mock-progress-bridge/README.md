@@ -33,5 +33,5 @@ For a local build, uncomment the `build` block in `docker-compose.example.yml`.
 
 Configure Mutsuki Kavita or Mutsuki Progress Bridge in Paperback:
 
-- Progress bridge URL: `http://<docker-host-ip>:8080`
+- Progress bridge URL: `http://<docker-host-ip>:6767`
 - Progress bridge token: leave blank unless `MUTSUKI_BRIDGE_TOKEN` is set

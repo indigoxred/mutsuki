@@ -1,0 +1,55 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import test from "node:test";
+
+import { SqliteBridgeStore } from "../../apps/kavita-mal-bridge/src/storage.js";
+
+test("SQLite store persists mappings, outbox items, review queue, and audit logs", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-bridge-"));
+  const dbPath = join(directory, "bridge.sqlite");
+  try {
+    const store = new SqliteBridgeStore(dbPath);
+    store.migrate();
+
+    await store.upsertSeriesMapping({
+      kavitaSeriesId: 44,
+      kavitaLibraryId: 3,
+      malId: 123,
+      matchMethod: "mal-url",
+      confidence: 1,
+      locked: false,
+      chapterOffset: 0,
+      volumeOffset: 0,
+      trackingMode: "chapter-and-volume",
+      lastObservedChapter: 10,
+      lastObservedVolume: 2,
+      lastPushedChapter: 8,
+      lastPushedVolume: 1,
+    });
+    await store.enqueueReview({
+      kavitaSeriesId: 45,
+      title: "Ambiguous",
+      reason: "ambiguous-or-low-confidence",
+      candidatesJson: "[]",
+    });
+    await store.audit({
+      type: "match",
+      kavitaSeriesId: 44,
+      message: "Matched via MAL URL",
+    });
+
+    const reopened = new SqliteBridgeStore(dbPath);
+    reopened.migrate();
+
+    assert.equal((await reopened.getSeriesMapping(44))?.malId, 123);
+    assert.equal((await reopened.listReviews()).length, 1);
+    assert.equal((await reopened.listAuditLogs()).length, 1);
+
+    store.close();
+    reopened.close();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

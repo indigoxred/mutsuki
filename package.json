@@ -15,8 +15,10 @@
     "dev": "paperback-cli serve --watch --port 5264",
     "bridge:mock:build": "pnpm --filter @mutsuki/mock-progress-bridge build",
     "bridge:mock:start": "pnpm --filter @mutsuki/mock-progress-bridge start",
+    "bridge:mal:build": "pnpm --filter @mutsuki/kavita-mal-bridge build",
+    "bridge:mal:start": "pnpm --filter @mutsuki/kavita-mal-bridge start",
     "test": "tsc --project tsconfig.test.json && node --test \"dist-tests/tests/**/*.test.js\"",
-    "verify": "pnpm run format:check && pnpm run typecheck && pnpm run lint:check && pnpm run bridge:mock:build && pnpm run bundle && pnpm run test"
+    "verify": "pnpm run format:check && pnpm run typecheck && pnpm run lint:check && pnpm run bridge:mock:build && pnpm run bridge:mal:build && pnpm run bundle && pnpm run test"
   },
   "dependencies": {
     "@paperback/runtime-polyfills": "1.0.0-alpha.92",

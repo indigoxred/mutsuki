@@ -1,0 +1,21 @@
+services:
+  mutsuki-kavita-mal-bridge:
+    image: ghcr.io/indigoxred/mutsuki/kavita-mal-bridge:latest
+    # To build locally instead:
+    # build:
+    #   context: ../..
+    #   dockerfile: apps/kavita-mal-bridge/Dockerfile
+    container_name: mutsuki-kavita-mal-bridge
+    ports:
+      - "6768:6768"
+    environment:
+      PORT: "6768"
+      MUTSUKI_BRIDGE_DB: /data/mutsuki-bridge.sqlite
+      # Keep true until mappings and desired updates look correct in the UI.
+      MUTSUKI_BRIDGE_DRY_RUN: "true"
+      KAVITA_BASE_URL: "https://read.example.test"
+      KAVITA_API_KEY: ""
+      # OAuth bearer token used for MAL API calls. Leave blank for matching/dry-run experiments.
+      MAL_ACCESS_TOKEN: ""
+    volumes:
+      - ./data:/data
