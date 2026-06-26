@@ -90,7 +90,11 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/sync/run") {
-        await respondJson(response, await options.runSync());
+        try {
+          await respondJson(response, await options.runSync());
+        } catch (error) {
+          await respondJson(response, safeErrorBody(error), syncErrorStatus(error));
+        }
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/mal/oauth/start") {
@@ -216,13 +220,20 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       }
       await respondJson(response, { error: "Not found." }, 404);
     } catch (error) {
-      await respondJson(
-        response,
-        { error: error instanceof Error ? sanitize(error.message) : "Unexpected bridge error." },
-        500,
-      );
+      await respondJson(response, safeErrorBody(error), 500);
     }
   });
+}
+
+function safeErrorBody(error: unknown): { error: string } {
+  return { error: error instanceof Error ? sanitize(error.message) : "Unexpected bridge error." };
+}
+
+function syncErrorStatus(error: unknown): number {
+  if (!(error instanceof Error)) return 500;
+  return /not configured|before running sync|settings are not configured/iu.test(error.message)
+    ? 409
+    : 500;
 }
 
 function schedulerStatus(

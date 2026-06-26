@@ -292,6 +292,40 @@ test("bridge server can save settings and approve an unresolved MAL mapping", as
   }
 });
 
+test("bridge server returns conflict when manual sync is not ready", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => {
+      throw new Error("MAL OAuth token is not configured. Authorize MAL before running sync.");
+    },
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/sync/run`, {
+      method: "POST",
+    });
+    const body = (await response.json()) as { error?: string };
+
+    assert.equal(response.status, 409);
+    assert.equal(
+      body.error,
+      "MAL OAuth token is not configured. Authorize MAL before running sync.",
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge server can ignore an unresolved match without a MAL id", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
