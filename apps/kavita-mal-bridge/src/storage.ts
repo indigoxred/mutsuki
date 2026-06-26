@@ -373,6 +373,10 @@ export class SqliteBridgeStore implements OutboxStore {
       : undefined;
   }
 
+  async clearOAuthTokens(): Promise<void> {
+    this.db.prepare("DELETE FROM mal_oauth_tokens WHERE id = 1").run();
+  }
+
   async findByDedupKey(dedupKey: string): Promise<BridgeOutboxItem | undefined> {
     const row = this.db.prepare("SELECT * FROM mal_outbox WHERE dedup_key = ?").get(dedupKey) as
       | OutboxRow

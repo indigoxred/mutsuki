@@ -161,6 +161,15 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         );
         return;
       }
+      if (request.method === "POST" && url.pathname === "/api/mal/oauth/disconnect") {
+        await options.store.clearOAuthTokens();
+        await options.store.audit({
+          type: "system",
+          message: "MAL OAuth disconnected.",
+        });
+        await respondJson(response, { ok: true });
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/settings") {
         const body = parseJsonRecord(await readRequestBody(request));
         await saveSettings(options.store, body);
@@ -487,6 +496,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     </div>
     <button type="submit">Save settings</button>
     <a class="button" href="/api/mal/oauth/start">Authorize MAL</a>
+    <button type="button" id="disconnect-mal">Disconnect MAL</button>
     <button type="button" id="run-sync">Run sync now</button>
     <button type="button" id="check-readiness">Check readiness</button>
     <button type="button" id="preview-kavita">Preview Kavita progress</button>
@@ -547,7 +557,11 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     });
     document.querySelector("#run-sync").addEventListener("click", async () => {
       const response = await fetch("/api/sync/run", { method: "POST" });
-      status.textContent = response.ok ? "Sync requested." : "Sync failed.";
+      status.textContent = response.ok ? "Sync requested." : await responseErrorMessage(response, "Sync failed.");
+    });
+    document.querySelector("#disconnect-mal").addEventListener("click", async () => {
+      const response = await fetch("/api/mal/oauth/disconnect", { method: "POST" });
+      status.textContent = response.ok ? "MAL authorization disconnected." : await responseErrorMessage(response, "Disconnect failed.");
     });
     document.querySelector("#check-readiness").addEventListener("click", async () => {
       const response = await fetch("/api/readiness");
@@ -611,6 +625,14 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
         });
         status.textContent = response.ok ? "Mapping override saved." : "Mapping override failed.";
       });
+    }
+    async function responseErrorMessage(response, fallback) {
+      try {
+        const body = await response.json();
+        return body && body.error ? body.error : fallback;
+      } catch {
+        return fallback;
+      }
     }
   </script>
 </body>

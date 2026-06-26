@@ -121,6 +121,8 @@ The SQLite database is stored under `/data`, so normal image updates should not 
 - If the Web UI is unreachable, confirm the host port maps to container port `6768` and no other
   container already owns the host port.
 - If sync returns `MAL OAuth token is not configured`, complete **Authorize MAL** again.
+- If the wrong MAL account was authorized or MAL keeps rejecting a stored token, use
+  **Disconnect MAL**, then complete **Authorize MAL** again.
 - If Kavita readiness fails, verify the Kavita URL is reachable from the Unraid host and that the
   stored key is a general API/Auth key rather than an image-only key.
 - If mappings are missing, leave dry-run enabled and inspect **Unresolved Matches** before approving

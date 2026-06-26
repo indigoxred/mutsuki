@@ -670,6 +670,59 @@ test("bridge server reports MAL OAuth callback errors without token exchange", a
   }
 });
 
+test("bridge server can disconnect persisted MAL OAuth tokens", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.saveOAuthTokens({
+    accessToken: "stored-access-token",
+    refreshToken: "stored-refresh-token",
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+    tokenType: "Bearer",
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/mal/oauth/disconnect`, {
+      method: "POST",
+    });
+    const body = (await response.json()) as { ok?: boolean };
+    const status = await fetchJson(`http://127.0.0.1:${port}/api/status`);
+    const audit = await store.listAuditLogs();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(await store.getOAuthTokens(), undefined);
+    assert.equal(status.malAuthorized, false);
+    assert.ok(
+      audit.some(
+        (entry) => entry.type === "system" && entry.message.includes("MAL OAuth disconnected"),
+      ),
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 async function fetchJson(url: string): Promise<any> {
   const response = await fetch(url);
   assert.equal(response.status, 200);

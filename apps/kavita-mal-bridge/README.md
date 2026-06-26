@@ -12,6 +12,7 @@ read-action feasibility tests.
 - SQLite persistence for mappings, review queue, outbox, and audit logs.
 - Local setup UI for Kavita, MAL OAuth client settings, dry-run mode, and poll interval.
 - MAL OAuth callback handling with persisted access/refresh tokens.
+- MAL OAuth disconnect/re-authorize support for stale or incorrect tokens.
 - Token refresh before scheduled/manual sync runs.
 - Deterministic MAL matching from existing Kavita MAL URLs/IDs and AniList IDs/links.
 - Strict high-confidence title matching.
@@ -66,6 +67,8 @@ configured Kavita endpoint can be queried with a lightweight probe and the store
 accepted before running a sync.
 Manual and scheduled sync runs require both Kavita configuration and a stored MAL OAuth token; the
 bridge will not poll the full library for mappings until MAL is authorized.
+If the wrong MAL account is authorized or MAL rejects the stored token, use **Disconnect MAL** and
+then run **Authorize MAL** again.
 
 ## API
 
@@ -78,6 +81,7 @@ bridge will not poll the full library for mappings until MAL is authorized.
 - `POST /api/settings`
 - `GET /api/mal/oauth/start`
 - `GET /api/mal/oauth/callback`
+- `POST /api/mal/oauth/disconnect`
 - `POST /api/unresolved-matches/:kavitaSeriesId/approve`
 - `POST /api/mappings/:kavitaSeriesId`
 

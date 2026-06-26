@@ -105,7 +105,8 @@ includes:
 - Kavita API polling for series metadata and observed progress fields;
 - local browser setup for Kavita settings, dry-run mode, poll interval, and MAL OAuth client
   settings;
-- MAL OAuth authorization, access/refresh-token persistence, and pre-sync token refresh;
+- MAL OAuth authorization, access/refresh-token persistence, disconnect/re-authorize support, and
+  pre-sync token refresh;
 - deterministic MAL ID/URL matching from existing Kavita external metadata;
 - deterministic AniList ID/link resolution to MAL IDs when Kavita already has AniList metadata;
 - high-confidence fallback search matching;
