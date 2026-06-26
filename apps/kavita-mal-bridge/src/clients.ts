@@ -123,7 +123,7 @@ export async function checkKavitaReadiness(config: BridgeConfig): Promise<Kavita
     return { configured: false, ok: false, message: "Kavita URL or API key is not configured." };
   }
   try {
-    const series = await createKavitaClient(config).listSeries();
+    const series = await probeKavitaSeries(config);
     return { configured: true, ok: true, seriesSeen: series.length };
   } catch (error) {
     return {
@@ -133,6 +133,20 @@ export async function checkKavitaReadiness(config: BridgeConfig): Promise<Kavita
         error instanceof Error ? sanitizeReadinessMessage(error.message) : "Kavita check failed.",
     };
   }
+}
+
+async function probeKavitaSeries(config: BridgeConfig): Promise<unknown[]> {
+  const baseUrl = normalizeBaseUrl(config.kavitaBaseUrl);
+  const json = await kavitaJson(
+    baseUrl,
+    config.kavitaApiKey,
+    "/api/Series/all-v2?pageNumber=0&pageSize=1",
+    {
+      method: "POST",
+      body: JSON.stringify({ statements: [], combination: 0 }),
+    },
+  );
+  return Array.isArray(json) ? json : arrayFromObject(json, ["items", "series", "value"]);
 }
 
 export async function checkMalReadiness(config: BridgeConfig): Promise<MalReadinessResult> {

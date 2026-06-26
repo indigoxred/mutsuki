@@ -8,25 +8,23 @@ import {
 } from "../../apps/kavita-mal-bridge/src/clients.js";
 import { bridgeConfigFromEnv } from "../../apps/kavita-mal-bridge/src/config.js";
 
-test("Kavita readiness checks the configured series endpoint and reports extracted series count", async () => {
+test("Kavita readiness uses a lightweight series probe without fetching volume progress", async () => {
   const originalFetch = globalThis.fetch;
+  const seenUrls: string[] = [];
   try {
     globalThis.fetch = async (input, init) => {
       const url =
         input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+      seenUrls.push(url);
       const headers = init?.headers as Record<string, string>;
       assert.equal(headers["x-api-key"], "secret-key");
-      if (url === "https://read.example.test/api/Series/all-v2") {
+      if (url === "https://read.example.test/api/Series/all-v2?pageNumber=0&pageSize=1") {
         return new Response(JSON.stringify([{ id: 1, name: "Series", libraryId: 2 }]), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         });
       }
-      assert.equal(url, "https://read.example.test/api/Series/volumes?seriesId=1");
-      return new Response(JSON.stringify([{ id: 1, name: "Series", libraryId: 2 }]), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      throw new Error(`readiness made an expensive or unexpected request to ${url}`);
     };
 
     const result = await checkKavitaReadiness({
@@ -38,6 +36,9 @@ test("Kavita readiness checks the configured series endpoint and reports extract
     assert.equal(result.configured, true);
     assert.equal(result.ok, true);
     assert.equal(result.seriesSeen, 1);
+    assert.deepEqual(seenUrls, [
+      "https://read.example.test/api/Series/all-v2?pageNumber=0&pageSize=1",
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
