@@ -82,6 +82,7 @@ export function createMalClient(config: BridgeConfig): BridgeMalClient {
   return {
     async searchManga(series): Promise<MalSearchCandidate[]> {
       if (!config.malAccessToken) return [];
+      if (!isSearchableMalQuery(series.title)) return [];
       const url = new URL("https://api.myanimelist.net/v2/manga");
       url.searchParams.set("q", series.title);
       url.searchParams.set("limit", "10");
@@ -89,7 +90,10 @@ export function createMalClient(config: BridgeConfig): BridgeMalClient {
         "fields",
         "alternative_titles,media_type,start_date,num_volumes,num_chapters,authors",
       );
-      const json = await malJson(config.malAccessToken, url.toString(), "GET");
+      const json = await malJson(config.malAccessToken, url.toString(), "GET").catch((error) => {
+        if (isInvalidMalSearchQueryError(error)) return { data: [] };
+        throw error;
+      });
       const data = (json as { data?: { node: unknown }[] }).data ?? [];
       return data.flatMap((entry) => malCandidateFromNode(entry.node));
     },
@@ -234,8 +238,31 @@ async function malJson(accessToken: string, url: string, method: "GET"): Promise
     method,
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  if (!response.ok) throw new Error(`MAL request failed with status ${response.status}.`);
-  return response.json();
+  const text = await response.text();
+  if (!response.ok) throw new MalRequestError(response.status, text);
+  return text ? JSON.parse(text) : {};
+}
+
+class MalRequestError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: string,
+  ) {
+    super(`MAL request failed with status ${status}.`);
+  }
+}
+
+function isInvalidMalSearchQueryError(error: unknown): boolean {
+  if (!(error instanceof MalRequestError) || error.status !== 400) return false;
+  return (
+    /"error"\s*:\s*"bad_request"/iu.test(error.body) &&
+    /"message"\s*:\s*"invalid q"/iu.test(error.body)
+  );
+}
+
+function isSearchableMalQuery(value: string): boolean {
+  const alphanumeric = value.normalize("NFKC").replace(/[^\p{Letter}\p{Number}]+/gu, "");
+  return alphanumeric.length > 1;
 }
 
 async function resolveAniListMalId(aniListId: number): Promise<number | undefined> {

@@ -6,6 +6,7 @@ import {
   checkMalReadiness,
   createExternalIdResolver,
   createKavitaClient,
+  createMalClient,
 } from "../../apps/kavita-mal-bridge/src/clients.js";
 import { bridgeConfigFromEnv } from "../../apps/kavita-mal-bridge/src/config.js";
 
@@ -451,6 +452,54 @@ test("MAL readiness verifies the stored OAuth token without leaking it in failur
     assert.equal(result.authorized, true);
     assert.equal(result.ok, false);
     assert.doesNotMatch(JSON.stringify(result), /secret-mal-token/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("MAL client does not send known-invalid short search queries", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      throw new Error("short MAL search query should not be sent");
+    };
+
+    const candidates = await createMalClient({
+      ...bridgeConfigFromEnv({}),
+      malAccessToken: "secret-mal-token",
+    }).searchManga({
+      kavitaSeriesId: 3,
+      title: "3",
+      contentType: "manga",
+      isSpecial: false,
+    });
+
+    assert.deepEqual(candidates, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("MAL client treats invalid search query responses as no candidates", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () =>
+      new Response(JSON.stringify({ message: "invalid q", error: "bad_request" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const candidates = await createMalClient({
+      ...bridgeConfigFromEnv({}),
+      malAccessToken: "secret-mal-token",
+    }).searchManga({
+      kavitaSeriesId: 4,
+      title: "bad query",
+      contentType: "manga",
+      isSpecial: false,
+    });
+
+    assert.deepEqual(candidates, []);
   } finally {
     globalThis.fetch = originalFetch;
   }
