@@ -44,6 +44,7 @@ export interface BridgeSyncResult {
   seriesSeen: number;
   autoMatched: number;
   reviewQueued: number;
+  searchDeferred?: number;
   updatesQueued: number;
   outboxProcessed: number;
   outboxPreviewed?: number;
@@ -62,6 +63,7 @@ export async function runBridgeSyncOnce(input: {
     seriesSeen: 0,
     autoMatched: 0,
     reviewQueued: 0,
+    searchDeferred: 0,
     updatesQueued: 0,
     outboxProcessed: 0,
     outboxPreviewed: 0,
@@ -77,13 +79,24 @@ export async function runBridgeSyncOnce(input: {
 
     let mapping = await input.store.getSeriesMapping(item.kavitaSeriesId);
     if (!mapping) {
-      mapping = await createMappingOrReview(input.store, input.mal, item, input.externalIdResolver);
-      if (!mapping) {
+      const mappingResult = await createMappingOrReview(
+        input.store,
+        input.mal,
+        item,
+        input.externalIdResolver,
+      );
+      if (mappingResult.status === "deferred") {
+        result.searchDeferred = (result.searchDeferred ?? 0) + 1;
+        continue;
+      }
+      mapping = mappingResult.mapping;
+      if (mappingResult.status === "review") {
         result.reviewQueued++;
         continue;
       }
       result.autoMatched++;
     }
+    if (!mapping) continue;
 
     const policy = policyFromMapping(mapping, item.contentType);
     const current = await input.mal.getCurrentProgress(mapping.malId);
@@ -155,7 +168,11 @@ async function createMappingOrReview(
   mal: BridgeMalClient,
   series: BridgeObservedSeries,
   externalIdResolver: BridgeExternalIdResolver | undefined,
-): Promise<SeriesMappingRecord | undefined> {
+): Promise<
+  | { status: "mapped"; mapping: SeriesMappingRecord }
+  | { status: "review"; mapping?: undefined }
+  | { status: "deferred"; mapping?: undefined }
+> {
   let decision = matchKavitaSeriesToMal({ series, searchCandidates: [] });
   if (decision.status === "review" && decision.reason === "no-candidates" && externalIdResolver) {
     const externalMatch = await externalIdResolver.resolveMalId(series).catch(() => undefined);
@@ -169,9 +186,22 @@ async function createMappingOrReview(
     }
   }
   if (decision.status === "review" && decision.reason === "no-candidates") {
+    let searchCandidates: MalSearchCandidate[];
+    try {
+      searchCandidates = await mal.searchManga(series);
+    } catch (error) {
+      const status = retryableMalSearchStatus(error);
+      if (status === undefined) throw error;
+      await store.audit({
+        type: "system",
+        kavitaSeriesId: series.kavitaSeriesId,
+        message: `Deferred MAL search after retryable status ${status}.`,
+      });
+      return { status: "deferred" };
+    }
     decision = matchKavitaSeriesToMal({
       series,
-      searchCandidates: await mal.searchManga(series),
+      searchCandidates,
     });
   }
 
@@ -187,7 +217,7 @@ async function createMappingOrReview(
       kavitaSeriesId: series.kavitaSeriesId,
       message: `Queued for review: ${decision.reason}`,
     });
-    return undefined;
+    return { status: "review" };
   }
 
   const policy = defaultTrackingPolicyForSeries(series.contentType);
@@ -213,7 +243,7 @@ async function createMappingOrReview(
     kavitaSeriesId: series.kavitaSeriesId,
     message: `Auto-linked MAL ${decision.malId} via ${decision.matchMethod}`,
   });
-  return record;
+  return { status: "mapped", mapping: record };
 }
 
 function policyFromMapping(
@@ -227,4 +257,23 @@ function policyFromMapping(
     chapterOffset: mapping.chapterOffset,
     volumeOffset: mapping.volumeOffset,
   };
+}
+
+function retryableMalSearchStatus(error: unknown): number | undefined {
+  const statusFromProperty =
+    typeof error === "object" && error !== null && "status" in error
+      ? Number((error as { status?: unknown }).status)
+      : undefined;
+  const status =
+    statusFromProperty !== undefined && Number.isFinite(statusFromProperty)
+      ? statusFromProperty
+      : statusFromMessage(error);
+  if (status === 429 || (status !== undefined && status >= 500 && status <= 599)) return status;
+  return undefined;
+}
+
+function statusFromMessage(error: unknown): number | undefined {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /\bstatus\s+([0-9]{3})\b/iu.exec(message);
+  return match?.[1] ? Number(match[1]) : undefined;
 }

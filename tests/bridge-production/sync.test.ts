@@ -213,3 +213,67 @@ test("sync auto-links deterministic external metadata before fuzzy title search"
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("sync defers one series when MAL search has a retryable server failure", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-sync-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const kavita: BridgeKavitaClient = {
+    listSeries: async () => [
+      {
+        kavitaSeriesId: 31,
+        title: "Transient Search Failure",
+        contentType: "manga",
+        completedChapter: 1,
+        completedVolume: 1,
+        isSpecial: false,
+      },
+      {
+        kavitaSeriesId: 32,
+        title: "Still Processes Later Series",
+        contentType: "manga",
+        webLinks: ["https://myanimelist.net/manga/777/Still_Processes_Later_Series"],
+        completedChapter: 2,
+        completedVolume: 1,
+        isSpecial: false,
+      },
+    ],
+  };
+  const mal: BridgeMalClient = {
+    searchManga: async () => {
+      const error = new Error("MAL request failed with status 504.");
+      (error as Error & { status?: number }).status = 504;
+      throw error;
+    },
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => ({ ok: true }),
+  };
+
+  try {
+    const result = await runBridgeSyncOnce({ store, kavita, mal, dryRun: true });
+
+    assert.equal(result.seriesSeen, 2);
+    assert.equal(result.searchDeferred, 1);
+    assert.equal(result.reviewQueued, 0);
+    assert.equal(result.autoMatched, 1);
+    assert.equal((await store.listReviews()).length, 0);
+    assert.equal(await store.getSeriesMapping(31), undefined);
+    assert.equal((await store.getSeriesMapping(32))?.malId, 777);
+    const audit = await store.listAuditLogs();
+    assert.ok(
+      audit.some(
+        (entry) =>
+          entry.type === "system" &&
+          entry.kavitaSeriesId === 31 &&
+          entry.message.includes("Deferred MAL search"),
+      ),
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
