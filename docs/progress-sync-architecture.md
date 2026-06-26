@@ -116,9 +116,12 @@ includes:
 - retry/outbox tables for MAL writes;
 - scheduled polling with overlap prevention;
 - audit logging.
+- progress extraction from current Kavita `VolumeDto`/`ChapterDto` fields via
+  `/api/Series/volumes?seriesId=...`, including fully read volume/chapter detection and ignoring
+  special chapters for chapter high-water marks.
 
-The next hardening pass should validate the exact Kavita user-library progress DTOs against the live
-server and then improve the Web UI around filtering, searching, and bulk-editing mappings.
+The next hardening pass should validate those progress values against the user's live Kavita server
+and then improve the Web UI around filtering, searching, and bulk-editing mappings.
 
 Default policies:
 
