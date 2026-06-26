@@ -601,7 +601,8 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     });
     document.querySelector("#run-sync").addEventListener("click", async () => {
       const response = await fetch("/api/sync/run", { method: "POST" });
-      status.textContent = response.ok ? "Sync requested." : await responseErrorMessage(response, "Sync failed.");
+      const result = response.ok ? await response.json() : undefined;
+      status.textContent = result ? syncResultMessage(result) : await responseErrorMessage(response, "Sync failed.");
     });
     document.querySelector("#disconnect-mal").addEventListener("click", async () => {
       const response = await fetch("/api/mal/oauth/disconnect", { method: "POST" });
@@ -688,6 +689,16 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       } catch {
         return fallback;
       }
+    }
+    function syncResultMessage(result) {
+      return "Sync: "
+        + result.seriesSeen + " series, "
+        + result.autoMatched + " auto-matched, "
+        + result.reviewQueued + " review, "
+        + result.updatesQueued + " queued, "
+        + (result.outboxPreviewed ?? 0) + " previewed, "
+        + result.outboxSucceeded + " pushed, "
+        + result.outboxFailed + " failed.";
     }
   </script>
 </body>

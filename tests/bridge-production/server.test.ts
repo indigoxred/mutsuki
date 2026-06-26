@@ -492,6 +492,8 @@ test("bridge home page exposes setup, OAuth, and review approval controls", asyn
     assert.match(html, /Candidate Two/u);
     assert.match(html, /0\.83/u);
     assert.match(html, /similar-title/u);
+    assert.match(html, /outboxPreviewed/u);
+    assert.match(html, /previewed/u);
     assert.doesNotMatch(html, /secret-key/u);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
