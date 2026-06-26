@@ -150,6 +150,63 @@ test("Kavita client derives read progress from current volume and chapter DTOs",
   }
 });
 
+test("Kavita client can request a bounded series page for progress preview", async () => {
+  const originalFetch = globalThis.fetch;
+  const seenUrls: string[] = [];
+  try {
+    globalThis.fetch = async (input, init) => {
+      const url =
+        input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+      seenUrls.push(url);
+      const headers = init?.headers as Record<string, string>;
+      assert.equal(headers["x-api-key"], "secret-key");
+
+      if (url === "https://read.example.test/api/Series/all-v2?pageNumber=0&pageSize=2") {
+        return new Response(
+          JSON.stringify([
+            { id: 1, name: "Preview One", libraryId: 7, format: "Manga" },
+            { id: 2, name: "Preview Two", libraryId: 7, format: "Manga" },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url === "https://read.example.test/api/Series/volumes?seriesId=1") {
+        return new Response(
+          JSON.stringify([{ minNumber: 1, maxNumber: 1, pages: 1, pagesRead: 1, chapters: [] }]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url === "https://read.example.test/api/Series/volumes?seriesId=2") {
+        return new Response(
+          JSON.stringify([{ minNumber: 2, maxNumber: 2, pages: 1, pagesRead: 0, chapters: [] }]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      throw new Error(`unexpected URL ${url}`);
+    };
+
+    const series = await createKavitaClient({
+      ...bridgeConfigFromEnv({}),
+      kavitaBaseUrl: "https://read.example.test",
+      kavitaApiKey: "secret-key",
+    }).listSeries({ limit: 2 });
+
+    assert.equal(series.length, 2);
+    assert.equal(series[0]?.title, "Preview One");
+    assert.equal(series[1]?.title, "Preview Two");
+    assert.deepEqual(seenUrls, [
+      "https://read.example.test/api/Series/all-v2?pageNumber=0&pageSize=2",
+      "https://read.example.test/api/Series/volumes?seriesId=1",
+      "https://read.example.test/api/Series/volumes?seriesId=2",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Kavita client keeps listing series when one volume progress request fails", async () => {
   const originalFetch = globalThis.fetch;
   try {

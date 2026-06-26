@@ -197,6 +197,72 @@ test("bridge server exposes readiness checks without leaking configured secrets"
   }
 });
 
+test("bridge server exposes a sanitized Kavita observed progress preview", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const requestedLimits: number[] = [];
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    previewKavitaProgress: async (limit) => {
+      requestedLimits.push(limit);
+      return [
+        {
+          kavitaSeriesId: 10,
+          kavitaLibraryId: 2,
+          title: "Observed Manga",
+          contentType: "manga",
+          mediaType: "manga",
+          completedChapter: 12,
+          completedVolume: 3,
+          isSpecial: false,
+        },
+        {
+          kavitaSeriesId: 11,
+          title: "Observed Novel",
+          contentType: "novel",
+          mediaType: "light_novel",
+          completedVolume: 5.5,
+          isSpecial: false,
+        },
+      ];
+    },
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const preview = await fetchJson(
+      `http://127.0.0.1:${port}/api/kavita/observed-progress?limit=1`,
+    );
+
+    assert.deepEqual(requestedLimits, [1]);
+    assert.equal(preview.limit, 1);
+    assert.equal(preview.count, 1);
+    assert.equal(preview.items.length, 1);
+    assert.equal(preview.items[0].title, "Observed Manga");
+    assert.equal(preview.items[0].completedChapter, 12);
+    assert.equal(preview.items[0].completedVolume, 3);
+    assert.doesNotMatch(JSON.stringify(preview), /api-key|Bearer/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge home page exposes setup, OAuth, and review approval controls", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));

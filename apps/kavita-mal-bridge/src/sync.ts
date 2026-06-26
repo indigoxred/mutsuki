@@ -22,7 +22,7 @@ export interface BridgeObservedSeries extends KavitaSeriesCandidate {
 }
 
 export interface BridgeKavitaClient {
-  listSeries(): Promise<BridgeObservedSeries[]>;
+  listSeries(options?: { limit?: number }): Promise<BridgeObservedSeries[]>;
 }
 
 export interface BridgeMalClient {

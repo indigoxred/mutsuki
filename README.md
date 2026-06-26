@@ -117,6 +117,10 @@ database path configured; use the local setup page to save the Kavita URL/API ke
 details, poll interval, and dry-run mode. MAL access and refresh tokens are stored in SQLite after
 OAuth authorization and refreshed before scheduled sync runs.
 
+Use **Preview Kavita progress** on the setup page, or call
+`GET /api/kavita/observed-progress?limit=25`, to verify the bridge can read Kavita's observed
+chapter/volume progress before MAL OAuth is authorized.
+
 For Unraid or persistent Docker deployment, see `docs/unraid-docker.md`.
 
 ## Development

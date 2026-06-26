@@ -25,8 +25,8 @@ export interface MalReadinessResult {
 export function createKavitaClient(config: BridgeConfig): BridgeKavitaClient {
   const baseUrl = normalizeBaseUrl(config.kavitaBaseUrl);
   return {
-    async listSeries(): Promise<BridgeObservedSeries[]> {
-      const json = await kavitaJson(baseUrl, config.kavitaApiKey, "/api/Series/all-v2", {
+    async listSeries(options?: { limit?: number }): Promise<BridgeObservedSeries[]> {
+      const json = await kavitaJson(baseUrl, config.kavitaApiKey, seriesListPath(options?.limit), {
         method: "POST",
         body: JSON.stringify({ statements: [], combination: 0 }),
       });
@@ -61,6 +61,12 @@ export function createKavitaClient(config: BridgeConfig): BridgeKavitaClient {
       });
     },
   };
+}
+
+function seriesListPath(limit: number | undefined): string {
+  if (limit === undefined) return "/api/Series/all-v2";
+  const pageSize = Math.max(1, Math.min(100, Math.floor(limit)));
+  return `/api/Series/all-v2?pageNumber=0&pageSize=${pageSize}`;
 }
 
 export function createMalClient(config: BridgeConfig): BridgeMalClient {

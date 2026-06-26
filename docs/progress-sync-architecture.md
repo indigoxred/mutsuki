@@ -112,11 +112,13 @@ includes:
 - unresolved match review, manual approval, manual ignore/restore, and existing-mapping override
   UI/API;
 - lightweight Kavita readiness checks and MAL OAuth authorization checks without mutating progress;
+- a bounded Kavita observed-progress preview endpoint/UI for validating progress extraction before
+  MAL OAuth is authorized;
 - monotonic high-water progress updates;
 - offsets and tracking policies;
 - retry/outbox tables for MAL writes;
 - scheduled polling with overlap prevention;
-- audit logging.
+- audit logging;
 - progress extraction from current Kavita `VolumeDto`/`ChapterDto` fields via
   `/api/Series/volumes?seriesId=...`, including fully read volume/chapter detection, standalone
   EPUB sentinel volume detection, and ignoring special chapters for chapter high-water marks.
@@ -125,6 +127,8 @@ Live validation on 2026-06-26 against the user's Kavita server confirmed:
 
 - readiness uses a bounded `pageSize=1` series probe and does not fan out to every volume;
 - full progress extraction can read the live library without writing to Kavita or MAL;
+- `GET /api/kavita/observed-progress?limit=25` reads a bounded page of Kavita series and returns
+  sanitized observed progress rows without API keys or authenticated URLs;
 - standalone EPUB/light-novel rows may appear as special sentinel chapters with volume identity in
   titles such as `Volume2` or `Volume10.5`, and the bridge derives volume progress from those
   markers while keeping chapter progress unset;

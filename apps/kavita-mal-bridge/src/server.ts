@@ -24,7 +24,7 @@ import {
   refreshStoredMalTokenIfNeeded,
 } from "./runtime.js";
 import { BridgeScheduler, type BridgeSchedulerResult } from "./scheduler.js";
-import { runBridgeSyncOnce, type BridgeSyncResult } from "./sync.js";
+import { runBridgeSyncOnce, type BridgeObservedSeries, type BridgeSyncResult } from "./sync.js";
 import { SqliteBridgeStore, type SeriesMappingRecord } from "./storage.js";
 
 export interface KavitaMalBridgeServerOptions {
@@ -33,6 +33,7 @@ export interface KavitaMalBridgeServerOptions {
   runSync: () => Promise<BridgeSyncResult>;
   oauthTransport?: OAuthTransport;
   checkReadiness?: () => Promise<BridgeReadinessResult>;
+  previewKavitaProgress?: (limit: number) => Promise<BridgeObservedSeries[]>;
   schedulerStatus?: () => { intervalMs: number; lastResult?: BridgeSchedulerResult };
   onSettingsSaved?: () => Promise<void> | void;
 }
@@ -87,6 +88,14 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       }
       if (request.method === "GET" && url.pathname === "/api/readiness") {
         await respondJson(response, await readiness(options));
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/kavita/observed-progress") {
+        const limit = queryLimit(url, 25, 100);
+        const items = (await kavitaProgressPreview(options, limit))
+          .slice(0, limit)
+          .map(observedProgressResponseItem);
+        await respondJson(response, { limit, count: items.length, items });
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/sync/run") {
@@ -257,6 +266,38 @@ async function readiness(options: KavitaMalBridgeServerOptions): Promise<BridgeR
     checkMalReadiness(config),
   ]);
   return { kavita, mal };
+}
+
+async function kavitaProgressPreview(
+  options: KavitaMalBridgeServerOptions,
+  limit: number,
+): Promise<BridgeObservedSeries[]> {
+  if (options.previewKavitaProgress) return options.previewKavitaProgress(limit);
+  const baseConfig = bridgeConfigFromEnv(process.env);
+  const config = await effectiveBridgeConfig(baseConfig, options.store);
+  if (!config.kavitaBaseUrl || !config.kavitaApiKey) {
+    throw new Error("Kavita URL or API key is not configured.");
+  }
+  return createKavitaClient(config).listSeries({ limit });
+}
+
+function observedProgressResponseItem(item: BridgeObservedSeries): Record<string, unknown> {
+  return {
+    kavitaSeriesId: item.kavitaSeriesId,
+    kavitaLibraryId: item.kavitaLibraryId,
+    title: item.title,
+    contentType: item.contentType,
+    mediaType: item.mediaType,
+    completedChapter: item.completedChapter,
+    completedVolume: item.completedVolume,
+    isSpecial: item.isSpecial,
+  };
+}
+
+function queryLimit(url: URL, fallback: number, max: number): number {
+  const parsed = Number(url.searchParams.get("limit") ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(max, Math.floor(parsed)));
 }
 
 async function saveSettings(
@@ -437,7 +478,9 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <a class="button" href="/api/mal/oauth/start">Authorize MAL</a>
     <button type="button" id="run-sync">Run sync now</button>
     <button type="button" id="check-readiness">Check readiness</button>
+    <button type="button" id="preview-kavita">Preview Kavita progress</button>
     <p class="muted" id="form-status"></p>
+    <pre class="muted" id="preview-output"></pre>
   </form>
   <h2>Mappings</h2>
   <p>${mappings.length} linked Kavita series.</p>
@@ -469,6 +512,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   </table>
   <script>
     const status = document.querySelector("#form-status");
+    const previewOutput = document.querySelector("#preview-output");
     function formJson(form) {
       const data = Object.fromEntries(new FormData(form).entries());
       if (!data.kavitaApiKey) delete data.kavitaApiKey;
@@ -500,6 +544,18 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       status.textContent = result
         ? "Kavita: " + (result.kavita.ok ? "ok" : "not ready") + ", MAL: " + (result.mal.ok ? "ok" : "not ready")
         : "Readiness check failed.";
+    });
+    document.querySelector("#preview-kavita").addEventListener("click", async () => {
+      const response = await fetch("/api/kavita/observed-progress?limit=25");
+      const result = response.ok ? await response.json() : undefined;
+      if (!result) {
+        status.textContent = "Kavita preview failed.";
+        return;
+      }
+      status.textContent = "Loaded " + result.count + " observed Kavita progress rows.";
+      previewOutput.textContent = result.items.map((item) =>
+        item.kavitaSeriesId + " - " + item.title + " - chapter " + (item.completedChapter ?? "-") + ", volume " + (item.completedVolume ?? "-")
+      ).join("\\n");
     });
     for (const form of document.querySelectorAll(".approval-form")) {
       form.addEventListener("submit", async (event) => {
