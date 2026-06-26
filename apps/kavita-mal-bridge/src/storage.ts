@@ -380,6 +380,25 @@ export class SqliteBridgeStore implements OutboxStore {
         item.id,
       );
   }
+
+  async recordPushedProgress(
+    kavitaSeriesId: number,
+    update: BridgeOutboxItem["update"],
+  ): Promise<void> {
+    const chapter = update.num_chapters_read ?? 0;
+    const volume = update.num_volumes_read ?? 0;
+    this.db
+      .prepare(
+        `
+          UPDATE series_mappings
+          SET last_pushed_chapter = MAX(last_pushed_chapter, ?),
+            last_pushed_volume = MAX(last_pushed_volume, ?),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE kavita_series_id = ?
+        `,
+      )
+      .run(chapter, volume, kavitaSeriesId);
+  }
 }
 
 interface MappingRow {

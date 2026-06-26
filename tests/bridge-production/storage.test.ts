@@ -56,6 +56,11 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     reopened.migrate();
 
     assert.equal((await reopened.getSeriesMapping(44))?.malId, 123);
+    await reopened.recordPushedProgress(44, { num_chapters_read: 12, num_volumes_read: 3 });
+    await reopened.recordPushedProgress(44, { num_chapters_read: 11, num_volumes_read: 2 });
+    const pushed = await reopened.getSeriesMapping(44);
+    assert.equal(pushed?.lastPushedChapter, 12);
+    assert.equal(pushed?.lastPushedVolume, 3);
     assert.equal((await reopened.listReviews()).length, 1);
     assert.equal((await reopened.listAuditLogs()).length, 1);
     assert.equal(await reopened.getSetting("kavitaBaseUrl"), "https://read.example.test");

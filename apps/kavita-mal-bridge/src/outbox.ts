@@ -21,6 +21,7 @@ export interface OutboxStore {
   insert(item: BridgeOutboxItem): Promise<void>;
   pending(limit: number): Promise<BridgeOutboxItem[]>;
   update(item: BridgeOutboxItem): Promise<void>;
+  recordPushedProgress?(kavitaSeriesId: number, update: BridgeMalProgressUpdate): Promise<void>;
 }
 
 export async function enqueueMalUpdate(
@@ -75,10 +76,12 @@ export async function processOutboxOnce(input: {
     }
 
     const result = await input.updateMal(item.malId, item.update);
-    if (result.ok || !result.retryable) {
-      await input.store.update(
-        markSucceeded(item, input.now?.() ?? new Date(), result.ok ? "" : result.message),
-      );
+    if (result.ok) {
+      await input.store.recordPushedProgress?.(item.kavitaSeriesId, item.update);
+      await input.store.update(markSucceeded(item, input.now?.() ?? new Date(), ""));
+      succeeded++;
+    } else if (!result.retryable) {
+      await input.store.update(markSucceeded(item, input.now?.() ?? new Date(), result.message));
       succeeded++;
     } else {
       await input.store.update(
