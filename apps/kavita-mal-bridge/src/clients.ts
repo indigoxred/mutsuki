@@ -28,7 +28,19 @@ export function createKavitaClient(config: BridgeConfig): BridgeKavitaClient {
       const records = Array.isArray(json)
         ? json
         : arrayFromObject(json, ["items", "series", "value"]);
-      return records.flatMap((record) => observedSeriesFromKavita(record));
+      const series = records.flatMap((record) => observedSeriesFromKavita(record));
+      return mapWithConcurrency(series, 4, async (item) => {
+        const progress = await observedProgressFromKavitaVolumes(
+          baseUrl,
+          config.kavitaApiKey,
+          item.kavitaSeriesId,
+        );
+        return {
+          ...item,
+          completedChapter: progress.completedChapter ?? item.completedChapter,
+          completedVolume: progress.completedVolume ?? item.completedVolume,
+        };
+      });
     },
   };
 }
@@ -202,6 +214,83 @@ function observedSeriesFromKavita(record: unknown): BridgeObservedSeries[] {
   ];
 }
 
+async function observedProgressFromKavitaVolumes(
+  baseUrl: string,
+  apiKey: string,
+  seriesId: number,
+): Promise<Pick<BridgeObservedSeries, "completedChapter" | "completedVolume">> {
+  const json = await kavitaJson(
+    baseUrl,
+    apiKey,
+    `/api/Series/volumes?seriesId=${encodeURIComponent(String(seriesId))}`,
+    { method: "GET" },
+  );
+  const volumes = Array.isArray(json) ? json : arrayFromObject(json, ["items", "volumes", "value"]);
+  let completedChapter: number | undefined;
+  let completedVolume: number | undefined;
+
+  for (const volume of volumes) {
+    if (!isRecord(volume)) continue;
+    const chapters = arrayFromObject(volume, ["chapters", "Chapters"]);
+    const volumeNumber = positiveNumberField(
+      volume,
+      "maxNumber",
+      "MaxNumber",
+      "minNumber",
+      "MinNumber",
+      "number",
+      "Number",
+      "name",
+      "Name",
+    );
+
+    if (isCompletedReadItem(volume) || areAllReadableChaptersComplete(chapters)) {
+      completedVolume = maxDefined(completedVolume, volumeNumber);
+    }
+
+    for (const chapter of chapters) {
+      if (!isRecord(chapter) || booleanField(chapter, "isSpecial", "IsSpecial")) continue;
+      if (!isCompletedReadItem(chapter)) continue;
+      const chapterNumber = positiveNumberField(
+        chapter,
+        "maxNumber",
+        "MaxNumber",
+        "minNumber",
+        "MinNumber",
+        "number",
+        "Number",
+        "range",
+        "Range",
+        "sortOrder",
+        "SortOrder",
+      );
+      completedChapter = maxDefined(completedChapter, chapterNumber);
+    }
+  }
+
+  return { completedChapter, completedVolume };
+}
+
+function areAllReadableChaptersComplete(chapters: unknown[]): boolean {
+  const readable = chapters.filter(
+    (chapter) => isRecord(chapter) && !booleanField(chapter, "isSpecial", "IsSpecial"),
+  );
+  return (
+    readable.length > 0 &&
+    readable.every((chapter) => isRecord(chapter) && isCompletedReadItem(chapter))
+  );
+}
+
+function isCompletedReadItem(record: Record<string, unknown>): boolean {
+  const pages = positiveNumberField(record, "pages", "Pages");
+  const pagesRead = numberField(record, "pagesRead", "PagesRead");
+  const totalReads = numberField(record, "totalReads", "TotalReads");
+  return (
+    (pages !== undefined && pagesRead !== undefined && pagesRead >= pages) ||
+    (totalReads !== undefined && totalReads > 0)
+  );
+}
+
 function malCandidateFromNode(node: unknown): MalSearchCandidate[] {
   if (!isRecord(node)) return [];
   const id = numberField(node, "id");
@@ -254,6 +343,31 @@ function numberField(record: Record<string, unknown>, ...keys: string[]): number
     }
   }
   return undefined;
+}
+
+function positiveNumberField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): number | undefined {
+  const value = numberField(record, ...keys);
+  return value !== undefined && value > 0 ? value : undefined;
+}
+
+function booleanField(record: Record<string, unknown>, ...keys: string[]): boolean {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "boolean") return value;
+    if (typeof value === "string") {
+      if (value.toLowerCase() === "true") return true;
+      if (value.toLowerCase() === "false") return false;
+    }
+  }
+  return false;
+}
+
+function maxDefined(current: number | undefined, next: number | undefined): number | undefined {
+  if (next === undefined) return current;
+  return current === undefined ? next : Math.max(current, next);
 }
 
 function stringField(record: Record<string, unknown>, ...keys: string[]): string | undefined {
@@ -325,4 +439,22 @@ function sanitizeReadinessMessage(message: string): string {
     .replace(/Bearer\s+\S+/giu, "Bearer redacted")
     .replace(/x-api-key[:=]\s*[^&\s"')<>]+/giu, "x-api-key=redacted")
     .slice(0, 200);
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
