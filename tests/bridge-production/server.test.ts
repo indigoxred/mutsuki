@@ -115,6 +115,62 @@ test("bridge server exposes outbox status and recent items", async () => {
   }
 });
 
+test("bridge server exposes mapped series titles for review and override", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.upsertSeriesMapping({
+    kavitaSeriesId: 70,
+    kavitaLibraryId: 2,
+    title: "Mapped Kavita Title",
+    malId: 9876,
+    matchMethod: "title-search",
+    confidence: 0.94,
+    locked: false,
+    chapterOffset: 0,
+    volumeOffset: 0,
+    trackingMode: "chapter-and-volume",
+    lastObservedChapter: 3,
+    lastObservedVolume: 1,
+    lastPushedChapter: 2,
+    lastPushedVolume: 1,
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const mappings = await fetchJson(`http://127.0.0.1:${port}/api/mappings`);
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+
+    assert.equal(mappings.items.length, 1);
+    assert.equal(mappings.items[0].kavitaSeriesId, 70);
+    assert.equal(mappings.items[0].title, "Mapped Kavita Title");
+    assert.equal(mappings.items[0].malId, 9876);
+    assert.match(html, /Mapped Kavita Title/u);
+    assert.doesNotMatch(JSON.stringify(mappings), /access-token|refresh-token|api-key/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge server notifies scheduler when poll interval settings change", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
@@ -350,6 +406,7 @@ test("bridge server can save settings and approve an unresolved MAL mapping", as
 
     assert.equal(await store.getSetting("kavitaBaseUrl"), "https://read.example.test");
     assert.equal((await store.getSeriesMapping(99))?.malId, 12345);
+    assert.equal((await store.getSeriesMapping(99))?.title, "Needs Review");
     assert.equal((await store.getSeriesMapping(99))?.locked, true);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));

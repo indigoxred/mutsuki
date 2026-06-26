@@ -191,6 +191,7 @@ async function createMappingOrReview(
   const record: SeriesMappingRecord = {
     kavitaSeriesId: series.kavitaSeriesId,
     kavitaLibraryId: series.kavitaLibraryId ?? series.libraryId,
+    title: series.title,
     malId: decision.malId,
     matchMethod: decision.matchMethod,
     confidence: decision.confidence,

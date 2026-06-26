@@ -74,6 +74,10 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         await respondJson(response, { items: await options.store.listOutbox(100) });
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/mappings") {
+        await respondJson(response, { items: await options.store.listSeriesMappings() });
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/api/unresolved-matches") {
         await respondJson(response, { items: await options.store.listReviews() });
         return;
@@ -204,7 +208,10 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       if (request.method === "POST" && approveMatch?.[1]) {
         const kavitaSeriesId = Number(approveMatch[1]);
         const body = parseJsonRecord(await readRequestBody(request));
-        const mapping = mappingFromApproval(kavitaSeriesId, body);
+        const review = (await options.store.listReviews()).find(
+          (item) => item.kavitaSeriesId === kavitaSeriesId,
+        );
+        const mapping = mappingFromApproval(kavitaSeriesId, body, review?.title);
         await options.store.upsertSeriesMapping(mapping);
         await options.store.deleteReview(kavitaSeriesId);
         await options.store.audit({
@@ -345,6 +352,7 @@ async function saveSettings(
 function mappingFromApproval(
   kavitaSeriesId: number,
   body: Record<string, unknown>,
+  title: string | undefined,
 ): SeriesMappingRecord {
   const malId = numberBodyField(body, "malId");
   if (!Number.isSafeInteger(kavitaSeriesId) || kavitaSeriesId <= 0) {
@@ -355,6 +363,7 @@ function mappingFromApproval(
   }
   return {
     kavitaSeriesId,
+    title,
     malId,
     matchMethod: "manual",
     confidence: 1,
@@ -506,7 +515,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   <h2>Mappings</h2>
   <p>${mappings.length} linked Kavita series.</p>
   <table>
-    <thead><tr><th>Kavita Series</th><th>MAL ID</th><th>Policy</th><th>Offsets</th><th>Override</th></tr></thead>
+    <thead><tr><th>Kavita Series</th><th>Title</th><th>MAL ID</th><th>Policy</th><th>Offsets</th><th>Override</th></tr></thead>
     <tbody>${mappings.map((mapping) => renderMappingRow(mapping)).join("")}</tbody>
   </table>
   <h2>Recent MAL Outbox</h2>
@@ -640,7 +649,8 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
 }
 
 function renderMappingRow(mapping: SeriesMappingRecord): string {
-  return `<tr><td>${mapping.kavitaSeriesId}</td><td>${mapping.malId}</td><td>${escapeHtml(mapping.trackingMode)}</td><td>chapter ${mapping.chapterOffset}, volume ${mapping.volumeOffset}</td><td>
+  const title = mapping.title ?? `Kavita series ${mapping.kavitaSeriesId}`;
+  return `<tr><td>${mapping.kavitaSeriesId}</td><td>${escapeHtml(title)}</td><td>${mapping.malId}</td><td>${escapeHtml(mapping.trackingMode)}</td><td>chapter ${mapping.chapterOffset}, volume ${mapping.volumeOffset}</td><td>
     <form class="mapping-form" data-endpoint="/api/mappings/${mapping.kavitaSeriesId}">
       <input name="malId" type="number" min="1" value="${mapping.malId}" />
       <select name="trackingMode">

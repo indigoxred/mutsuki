@@ -18,7 +18,8 @@ read-action feasibility tests.
 - Strict high-confidence title matching.
 - Review queue and manual approval controls for ambiguous or low-confidence matches.
 - Manual ignore and restore controls for unresolved series which should not sync to MAL.
-- Manual override controls for existing mappings, offsets, and tracking policies.
+- Manual override controls for existing mappings, offsets, tracking policies, and persisted Kavita
+  titles.
 - Lightweight Kavita readiness checks and MAL OAuth authorization checks.
 - Manga defaults to chapter-and-volume tracking.
 - Light novels default to volume-only tracking.
@@ -74,6 +75,7 @@ then run **Authorize MAL** again.
 
 - `GET /api/status`
 - `GET /api/readiness`
+- `GET /api/mappings`
 - `GET /api/unresolved-matches`
 - `GET /api/outbox`
 - `GET /api/audit-log`

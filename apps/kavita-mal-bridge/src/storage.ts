@@ -6,6 +6,7 @@ import type { BridgeTrackingMode } from "./policy.js";
 export interface SeriesMappingRecord {
   kavitaSeriesId: number;
   kavitaLibraryId?: number;
+  title?: string;
   malId: number;
   matchMethod: string;
   confidence: number;
@@ -67,6 +68,7 @@ export class SqliteBridgeStore implements OutboxStore {
       CREATE TABLE IF NOT EXISTS series_mappings (
         kavita_series_id INTEGER PRIMARY KEY,
         kavita_library_id INTEGER,
+        title TEXT,
         mal_id INTEGER NOT NULL,
         match_method TEXT NOT NULL,
         confidence REAL NOT NULL,
@@ -133,6 +135,7 @@ export class SqliteBridgeStore implements OutboxStore {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
+    this.addColumnIfMissing("series_mappings", "title", "TEXT");
   }
 
   close(): void {
@@ -144,12 +147,13 @@ export class SqliteBridgeStore implements OutboxStore {
       .prepare(
         `
           INSERT INTO series_mappings (
-            kavita_series_id, kavita_library_id, mal_id, match_method, confidence, locked,
+            kavita_series_id, kavita_library_id, title, mal_id, match_method, confidence, locked,
             chapter_offset, volume_offset, tracking_mode, last_observed_chapter,
             last_observed_volume, last_pushed_chapter, last_pushed_volume, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
           ON CONFLICT(kavita_series_id) DO UPDATE SET
             kavita_library_id = excluded.kavita_library_id,
+            title = excluded.title,
             mal_id = excluded.mal_id,
             match_method = excluded.match_method,
             confidence = excluded.confidence,
@@ -167,6 +171,7 @@ export class SqliteBridgeStore implements OutboxStore {
       .run(
         record.kavitaSeriesId,
         record.kavitaLibraryId ?? null,
+        record.title ?? null,
         record.malId,
         record.matchMethod,
         record.confidence,
@@ -473,6 +478,14 @@ export class SqliteBridgeStore implements OutboxStore {
       )
       .run(chapter, volume, kavitaSeriesId);
   }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as unknown as {
+      name: string;
+    }[];
+    if (rows.some((row) => row.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
 }
 
 function countForStatus(
@@ -485,6 +498,7 @@ function countForStatus(
 interface MappingRow {
   kavita_series_id: number;
   kavita_library_id: number | null;
+  title: string | null;
   mal_id: number;
   match_method: string;
   confidence: number;
@@ -557,6 +571,7 @@ function mappingFromRow(row: MappingRow): SeriesMappingRecord {
   return {
     kavitaSeriesId: row.kavita_series_id,
     kavitaLibraryId: row.kavita_library_id ?? undefined,
+    title: row.title ?? undefined,
     malId: row.mal_id,
     matchMethod: row.match_method,
     confidence: row.confidence,

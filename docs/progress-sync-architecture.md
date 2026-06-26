@@ -111,7 +111,7 @@ includes:
 - deterministic AniList ID/link resolution to MAL IDs when Kavita already has AniList metadata;
 - high-confidence fallback search matching;
 - unresolved match review, manual approval, manual ignore/restore, and existing-mapping override
-  UI/API;
+  UI/API with persisted Kavita titles on mapping rows;
 - lightweight Kavita readiness checks and MAL OAuth authorization checks without mutating progress;
 - a bounded Kavita observed-progress preview endpoint/UI for validating progress extraction before
   MAL OAuth is authorized;

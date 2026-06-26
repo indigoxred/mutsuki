@@ -17,6 +17,7 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     await store.upsertSeriesMapping({
       kavitaSeriesId: 44,
       kavitaLibraryId: 3,
+      title: "Mapped Story",
       malId: 123,
       matchMethod: "mal-url",
       confidence: 1,
@@ -62,6 +63,7 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     reopened.migrate();
 
     assert.equal((await reopened.getSeriesMapping(44))?.malId, 123);
+    assert.equal((await reopened.getSeriesMapping(44))?.title, "Mapped Story");
     await reopened.recordPushedProgress(44, { num_chapters_read: 12, num_volumes_read: 3 });
     await reopened.recordPushedProgress(44, { num_chapters_read: 11, num_volumes_read: 2 });
     const pushed = await reopened.getSeriesMapping(44);

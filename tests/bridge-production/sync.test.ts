@@ -52,6 +52,7 @@ test("sync polls Kavita, auto-links deterministic MAL metadata, and queues monot
     assert.equal(result.outboxSucceeded, 1);
     assert.equal(malUpdates.length, 0);
     assert.equal((await store.getSeriesMapping(9))?.malId, 555);
+    assert.equal((await store.getSeriesMapping(9))?.title, "A Story");
     const audit = await store.listAuditLogs();
     assert.ok(
       audit.some(
