@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
 
+import { enqueueMalUpdate, processOutboxOnce } from "../../apps/kavita-mal-bridge/src/outbox.js";
 import { SqliteBridgeStore } from "../../apps/kavita-mal-bridge/src/storage.js";
 
 test("SQLite store persists mappings, outbox items, review queue, and audit logs", async () => {
@@ -61,6 +62,24 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     const pushed = await reopened.getSeriesMapping(44);
     assert.equal(pushed?.lastPushedChapter, 12);
     assert.equal(pushed?.lastPushedVolume, 3);
+    await enqueueMalUpdate(reopened, {
+      kavitaSeriesId: 44,
+      malId: 123,
+      update: { num_chapters_read: 12 },
+      reason: "progress-sync",
+    });
+    await processOutboxOnce({
+      store: reopened,
+      dryRun: true,
+      updateMal: async () => {
+        throw new Error("dry-run should not call MAL");
+      },
+    });
+    const outbox = await reopened.listOutbox(10);
+    const outboxCounts = await reopened.outboxCounts();
+    assert.equal(outbox.length, 1);
+    assert.equal(outbox[0]?.status, "succeeded");
+    assert.equal(outboxCounts.succeeded, 1);
     assert.equal((await reopened.listReviews()).length, 1);
     assert.equal((await reopened.listAuditLogs()).length, 1);
     assert.equal(await reopened.getSetting("kavitaBaseUrl"), "https://read.example.test");

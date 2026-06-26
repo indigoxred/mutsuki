@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { enqueueMalUpdate } from "../../apps/kavita-mal-bridge/src/outbox.js";
 import { createKavitaMalBridgeServer } from "../../apps/kavita-mal-bridge/src/server.js";
 import { SqliteBridgeStore } from "../../apps/kavita-mal-bridge/src/storage.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -54,6 +55,53 @@ test("bridge server exposes status and unresolved review API", async () => {
     assert.equal(status.scheduler.lastResult.skipped, false);
     assert.equal(reviews.items.length, 1);
     assert.equal(reviews.items[0].title, "Needs Review");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server exposes outbox status and recent items", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await enqueueMalUpdate(store, {
+    kavitaSeriesId: 99,
+    malId: 12345,
+    update: { num_chapters_read: 8, num_volumes_read: 2 },
+    reason: "progress-sync",
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const status = await fetchJson(`http://127.0.0.1:${port}/api/status`);
+    const outbox = await fetchJson(`http://127.0.0.1:${port}/api/outbox`);
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+
+    assert.equal(status.outbox.pending, 1);
+    assert.equal(status.outbox.succeeded, 0);
+    assert.equal(outbox.items.length, 1);
+    assert.equal(outbox.items[0].kavitaSeriesId, 99);
+    assert.equal(outbox.items[0].update.num_chapters_read, 8);
+    assert.match(html, /Recent MAL Outbox/u);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();

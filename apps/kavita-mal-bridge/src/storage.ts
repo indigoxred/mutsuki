@@ -362,6 +362,25 @@ export class SqliteBridgeStore implements OutboxStore {
     ).map(outboxFromRow);
   }
 
+  async listOutbox(limit = 100): Promise<BridgeOutboxItem[]> {
+    return (
+      this.db
+        .prepare("SELECT * FROM mal_outbox ORDER BY created_at DESC LIMIT ?")
+        .all(limit) as unknown as OutboxRow[]
+    ).map(outboxFromRow);
+  }
+
+  async outboxCounts(): Promise<Record<BridgeOutboxItem["status"], number>> {
+    const rows = this.db
+      .prepare("SELECT status, COUNT(*) AS count FROM mal_outbox GROUP BY status")
+      .all() as unknown as { status: BridgeOutboxItem["status"]; count: number }[];
+    return {
+      pending: countForStatus(rows, "pending"),
+      succeeded: countForStatus(rows, "succeeded"),
+      failed: countForStatus(rows, "failed"),
+    };
+  }
+
   async update(item: BridgeOutboxItem): Promise<void> {
     this.db
       .prepare(
@@ -399,6 +418,13 @@ export class SqliteBridgeStore implements OutboxStore {
       )
       .run(chapter, volume, kavitaSeriesId);
   }
+}
+
+function countForStatus(
+  rows: { status: BridgeOutboxItem["status"]; count: number }[],
+  status: BridgeOutboxItem["status"],
+): number {
+  return rows.find((row) => row.status === status)?.count ?? 0;
 }
 
 interface MappingRow {

@@ -53,6 +53,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       if (request.method === "GET" && url.pathname === "/api/status") {
         const settings = await options.store.listSettings();
         const tokens = await options.store.getOAuthTokens();
+        const outbox = await options.store.outboxCounts();
         await respondJson(response, {
           dryRun: settingBoolean(settings.dryRun, options.dryRun),
           kavitaConfigured: Boolean(settings.kavitaBaseUrl && settings.kavitaApiKey),
@@ -61,9 +62,14 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           pollIntervalSeconds: settingNumber(settings.pollIntervalSeconds),
           mappings: (await options.store.listSeriesMappings()).length,
           unresolved: (await options.store.listReviews()).length,
+          outbox,
           scheduler: schedulerStatus(options),
           audit: (await options.store.listAuditLogs(25)).slice(0, 10),
         });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/outbox") {
+        await respondJson(response, { items: await options.store.listOutbox(100) });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/unresolved-matches") {
@@ -313,13 +319,17 @@ function settingNumber(value: string | undefined): number | undefined {
 }
 
 async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string> {
-  const [mappings, reviews, audit, settings, tokens] = await Promise.all([
-    options.store.listSeriesMappings(),
-    options.store.listReviews(),
-    options.store.listAuditLogs(20),
-    options.store.listSettings(),
-    options.store.getOAuthTokens(),
-  ]);
+  const [mappings, reviews, audit, settings, tokens, outboxItems, outboxCounts] = await Promise.all(
+    [
+      options.store.listSeriesMappings(),
+      options.store.listReviews(),
+      options.store.listAuditLogs(20),
+      options.store.listSettings(),
+      options.store.getOAuthTokens(),
+      options.store.listOutbox(25),
+      options.store.outboxCounts(),
+    ],
+  );
   const effectiveDryRun = settingBoolean(settings.dryRun, options.dryRun);
   const schedule = schedulerStatus(options);
   return `<!doctype html>
@@ -385,6 +395,12 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   <table>
     <thead><tr><th>Kavita Series</th><th>MAL ID</th><th>Policy</th><th>Offsets</th><th>Override</th></tr></thead>
     <tbody>${mappings.map((mapping) => renderMappingRow(mapping)).join("")}</tbody>
+  </table>
+  <h2>Recent MAL Outbox</h2>
+  <p>${outboxCounts.pending} pending, ${outboxCounts.succeeded} succeeded, ${outboxCounts.failed} failed.</p>
+  <table>
+    <thead><tr><th>Created</th><th>Status</th><th>Kavita Series</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th></tr></thead>
+    <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
   </table>
   <h2>Unresolved Matches</h2>
   <table>
@@ -476,6 +492,12 @@ function renderMappingRow(mapping: SeriesMappingRecord): string {
       <button type="submit">Save</button>
     </form>
   </td></tr>`;
+}
+
+function renderOutboxRow(
+  item: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>[number],
+): string {
+  return `<tr><td>${escapeHtml(item.createdAt)}</td><td>${escapeHtml(item.status)}</td><td>${item.kavitaSeriesId}</td><td>${item.malId}</td><td>${escapeHtml(JSON.stringify(item.update))}</td><td>${item.attempts}</td><td>${escapeHtml(item.lastError ?? "")}</td></tr>`;
 }
 
 function trackingModeOption(

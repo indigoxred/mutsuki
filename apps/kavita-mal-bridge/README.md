@@ -23,7 +23,7 @@ read-action feasibility tests.
 - Monotonic high-water MAL update planning with offsets.
 - Dry-run mode enabled by default.
 - Scheduled polling with overlap prevention and live poll-interval rescheduling from the setup UI.
-- Local Web/API status, setup, audit, and unresolved-match views.
+- Local Web/API status, setup, outbox, audit, and unresolved-match views.
 
 ## Docker
 
@@ -71,6 +71,7 @@ bridge will not poll the full library for mappings until MAL is authorized.
 - `GET /api/status`
 - `GET /api/readiness`
 - `GET /api/unresolved-matches`
+- `GET /api/outbox`
 - `GET /api/audit-log`
 - `POST /api/sync/run`
 - `POST /api/settings`
