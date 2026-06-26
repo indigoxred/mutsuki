@@ -10,14 +10,18 @@ read-action feasibility tests.
 ## Current Capabilities
 
 - SQLite persistence for mappings, review queue, outbox, and audit logs.
+- Local setup UI for Kavita, MAL OAuth client settings, dry-run mode, and poll interval.
+- MAL OAuth callback handling with persisted access/refresh tokens.
+- Token refresh before scheduled/manual sync runs.
 - Deterministic MAL matching from existing Kavita MAL URLs/IDs.
 - Strict high-confidence title matching.
-- Review queue for ambiguous or low-confidence matches.
+- Review queue and manual approval controls for ambiguous or low-confidence matches.
 - Manga defaults to chapter-and-volume tracking.
 - Light novels default to volume-only tracking.
 - Monotonic high-water MAL update planning with offsets.
 - Dry-run mode enabled by default.
-- Local Web/API status and unresolved-match views.
+- Scheduled polling with overlap prevention.
+- Local Web/API status, setup, audit, and unresolved-match views.
 
 ## Docker
 
@@ -35,13 +39,26 @@ http://<docker-host-ip>:6768
 Minimum environment:
 
 ```text
-KAVITA_BASE_URL=https://read.example.test
-KAVITA_API_KEY=your-kavita-auth-key
 MUTSUKI_BRIDGE_DRY_RUN=true
 ```
 
-Set `MAL_ACCESS_TOKEN` to an OAuth bearer token when you are ready to test live MAL API calls.
-Keep dry-run enabled until the UI shows the expected mappings and queued updates.
+The container can start without Kavita or MAL secrets so the setup UI is reachable. Save these in
+the Web UI:
+
+- Kavita URL and Kavita Auth/API key
+- MAL OAuth client ID, optional client secret, and redirect URI
+- poll interval
+- dry-run mode
+
+For MAL OAuth, create a MAL API client and use a redirect URI that points back to the bridge, for
+example:
+
+```text
+http://192.168.50.138:6768/api/mal/oauth/callback
+```
+
+After saving the MAL client settings, use **Authorize MAL** on the bridge page. Keep dry-run enabled
+until the UI shows the expected mappings and queued updates.
 
 ## API
 
@@ -49,6 +66,10 @@ Keep dry-run enabled until the UI shows the expected mappings and queued updates
 - `GET /api/unresolved-matches`
 - `GET /api/audit-log`
 - `POST /api/sync/run`
+- `POST /api/settings`
+- `GET /api/mal/oauth/start`
+- `GET /api/mal/oauth/callback`
+- `POST /api/unresolved-matches/:kavitaSeriesId/approve`
 
 ## Unraid Notes
 

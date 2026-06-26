@@ -39,6 +39,18 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
       kavitaSeriesId: 44,
       message: "Matched via MAL URL",
     });
+    await store.saveSetting("kavitaBaseUrl", "https://read.example.test");
+    await store.saveOAuthState({
+      state: "state-1",
+      codeVerifier: "verifier-1",
+      createdAt: "2026-06-26T00:00:00.000Z",
+    });
+    await store.saveOAuthTokens({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: "2026-06-26T01:00:00.000Z",
+      tokenType: "Bearer",
+    });
 
     const reopened = new SqliteBridgeStore(dbPath);
     reopened.migrate();
@@ -46,6 +58,9 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     assert.equal((await reopened.getSeriesMapping(44))?.malId, 123);
     assert.equal((await reopened.listReviews()).length, 1);
     assert.equal((await reopened.listAuditLogs()).length, 1);
+    assert.equal(await reopened.getSetting("kavitaBaseUrl"), "https://read.example.test");
+    assert.equal((await reopened.getOAuthState("state-1"))?.codeVerifier, "verifier-1");
+    assert.equal((await reopened.getOAuthTokens())?.accessToken, "access-token");
 
     store.close();
     reopened.close();

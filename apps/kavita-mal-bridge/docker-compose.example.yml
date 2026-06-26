@@ -13,9 +13,12 @@ services:
       MUTSUKI_BRIDGE_DB: /data/mutsuki-bridge.sqlite
       # Keep true until mappings and desired updates look correct in the UI.
       MUTSUKI_BRIDGE_DRY_RUN: "true"
-      KAVITA_BASE_URL: "https://read.example.test"
+      # Optional: these can also be configured from the bridge Web UI.
+      MUTSUKI_BRIDGE_POLL_INTERVAL_SECONDS: "1800"
+      KAVITA_BASE_URL: ""
       KAVITA_API_KEY: ""
-      # OAuth bearer token used for MAL API calls. Leave blank for matching/dry-run experiments.
-      MAL_ACCESS_TOKEN: ""
+      MAL_CLIENT_ID: ""
+      MAL_CLIENT_SECRET: ""
+      MAL_REDIRECT_URI: ""
     volumes:
       - ./data:/data

@@ -103,18 +103,21 @@ includes:
 
 - SQLite storage;
 - Kavita API polling for series metadata and observed progress fields;
-- MAL API access through an OAuth bearer token supplied by configuration;
+- local browser setup for Kavita settings, dry-run mode, poll interval, and MAL OAuth client
+  settings;
+- MAL OAuth authorization, access/refresh-token persistence, and pre-sync token refresh;
 - deterministic MAL ID/URL matching from existing Kavita external metadata;
 - high-confidence fallback search matching;
-- unresolved match review UI/API;
+- unresolved match review and manual approval UI/API;
 - monotonic high-water progress updates;
 - offsets and tracking policies;
 - retry/outbox tables for MAL writes;
+- scheduled polling with overlap prevention;
 - audit logging.
 
-The next hardening pass should add an in-app MAL OAuth setup flow with refresh-token persistence and
-expand Kavita progress extraction once the exact user-library progress DTOs are validated against the
-live server.
+The next hardening pass should validate the exact Kavita user-library progress DTOs against the live
+server and then broaden the Web UI for editing existing mappings, offsets, tracking modes, and
+disabled titles.
 
 Default policies:
 

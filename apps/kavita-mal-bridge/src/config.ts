@@ -5,6 +5,10 @@ export interface BridgeConfig {
   kavitaBaseUrl: string;
   kavitaApiKey: string;
   malAccessToken: string;
+  malClientId: string;
+  malClientSecret: string;
+  malRedirectUri: string;
+  pollIntervalSeconds: number;
 }
 
 export function bridgeConfigFromEnv(env: NodeJS.ProcessEnv): BridgeConfig {
@@ -12,9 +16,13 @@ export function bridgeConfigFromEnv(env: NodeJS.ProcessEnv): BridgeConfig {
     port: parsePort(env.PORT),
     databasePath: env.MUTSUKI_BRIDGE_DB ?? "/data/mutsuki-bridge.sqlite",
     dryRun: env.MUTSUKI_BRIDGE_DRY_RUN !== "false",
-    kavitaBaseUrl: required(env.KAVITA_BASE_URL, "KAVITA_BASE_URL"),
-    kavitaApiKey: required(env.KAVITA_API_KEY, "KAVITA_API_KEY"),
+    kavitaBaseUrl: env.KAVITA_BASE_URL?.trim() ?? "",
+    kavitaApiKey: env.KAVITA_API_KEY ?? "",
     malAccessToken: env.MAL_ACCESS_TOKEN ?? "",
+    malClientId: env.MAL_CLIENT_ID ?? "",
+    malClientSecret: env.MAL_CLIENT_SECRET ?? "",
+    malRedirectUri: env.MAL_REDIRECT_URI ?? "",
+    pollIntervalSeconds: parsePollInterval(env.MUTSUKI_BRIDGE_POLL_INTERVAL_SECONDS),
   };
 }
 
@@ -24,8 +32,8 @@ function parsePort(value: string | undefined): number {
   return parsed;
 }
 
-function required(value: string | undefined, name: string): string {
-  const trimmed = value?.trim() ?? "";
-  if (!trimmed) throw new Error(`${name} is required.`);
-  return trimmed;
+function parsePollInterval(value: string | undefined): number {
+  const parsed = Number(value ?? "1800");
+  if (!Number.isSafeInteger(parsed) || parsed < 60) return 1800;
+  return parsed;
 }

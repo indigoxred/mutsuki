@@ -13,8 +13,8 @@ It also includes two bridge apps:
 - `apps/mock-progress-bridge`: a diagnostic Phase 1 receiver which proves Paperback-to-bridge
   networking and displays queued read actions forwarded by the Mutsuki Progress Bridge tracker.
 - `apps/kavita-mal-bridge`: the Phase 2 production bridge foundation which polls Kavita as the
-  progress source of truth, stores mappings/outbox/audit state in SQLite, and prepares monotonic MAL
-  updates.
+  progress source of truth, stores mappings/outbox/audit/OAuth state in SQLite, and prepares
+  monotonic MAL updates.
 
 Automatic read-completion delivery from Paperback to the original Kavita source is not available in
 the observed runtime, so the production bridge currently depends on Kavita progress being updated by
@@ -112,7 +112,10 @@ docker compose -f docker-compose.example.yml up
 ```
 
 Open `http://<docker-host-ip>:6768`. Keep `MUTSUKI_BRIDGE_DRY_RUN=true` until the UI shows expected
-Kavita-to-MAL mappings and desired progress updates.
+Kavita-to-MAL mappings and desired progress updates. The bridge can start with only a persistent
+database path configured; use the local setup page to save the Kavita URL/API key, MAL OAuth client
+details, poll interval, and dry-run mode. MAL access and refresh tokens are stored in SQLite after
+OAuth authorization and refreshed before scheduled sync runs.
 
 ## Development
 

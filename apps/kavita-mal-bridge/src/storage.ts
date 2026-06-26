@@ -34,6 +34,19 @@ export interface AuditRecord {
   dataJson?: string;
 }
 
+export interface OAuthStateRecord {
+  state: string;
+  codeVerifier: string;
+  createdAt: string;
+}
+
+export interface OAuthTokenRecord {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: string;
+  tokenType: string;
+}
+
 export class SqliteBridgeStore implements OutboxStore {
   private readonly db: DatabaseSync;
 
@@ -87,6 +100,24 @@ export class SqliteBridgeStore implements OutboxStore {
         message TEXT NOT NULL,
         data_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS bridge_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS mal_oauth_state (
+        state TEXT PRIMARY KEY,
+        code_verifier TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS mal_oauth_tokens (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        access_token TEXT NOT NULL,
+        refresh_token TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        token_type TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
   }
@@ -167,6 +198,10 @@ export class SqliteBridgeStore implements OutboxStore {
       .run(record.kavitaSeriesId, record.title, record.reason, record.candidatesJson);
   }
 
+  async deleteReview(kavitaSeriesId: number): Promise<void> {
+    this.db.prepare("DELETE FROM review_queue WHERE kavita_series_id = ?").run(kavitaSeriesId);
+  }
+
   async listReviews(): Promise<Required<ReviewRecord>[]> {
     return (
       this.db
@@ -201,6 +236,90 @@ export class SqliteBridgeStore implements OutboxStore {
       dataJson: row.data_json ?? undefined,
       createdAt: row.created_at,
     }));
+  }
+
+  async saveSetting(key: string, value: string): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO bridge_settings (key, value, updated_at)
+          VALUES (?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+        `,
+      )
+      .run(key, value);
+  }
+
+  async getSetting(key: string): Promise<string | undefined> {
+    const row = this.db.prepare("SELECT value FROM bridge_settings WHERE key = ?").get(key) as
+      | { value: string }
+      | undefined;
+    return row?.value;
+  }
+
+  async listSettings(): Promise<Record<string, string>> {
+    const rows = this.db
+      .prepare("SELECT key, value FROM bridge_settings ORDER BY key")
+      .all() as unknown as SettingRow[];
+    return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  }
+
+  async saveOAuthState(record: OAuthStateRecord): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO mal_oauth_state (state, code_verifier, created_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(state) DO UPDATE SET code_verifier = excluded.code_verifier,
+            created_at = excluded.created_at
+        `,
+      )
+      .run(record.state, record.codeVerifier, record.createdAt);
+  }
+
+  async getOAuthState(state: string): Promise<OAuthStateRecord | undefined> {
+    const row = this.db.prepare("SELECT * FROM mal_oauth_state WHERE state = ?").get(state) as
+      | OAuthStateRow
+      | undefined;
+    return row
+      ? { state: row.state, codeVerifier: row.code_verifier, createdAt: row.created_at }
+      : undefined;
+  }
+
+  async deleteOAuthState(state: string): Promise<void> {
+    this.db.prepare("DELETE FROM mal_oauth_state WHERE state = ?").run(state);
+  }
+
+  async saveOAuthTokens(record: OAuthTokenRecord): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO mal_oauth_tokens (
+            id, access_token, refresh_token, expires_at, token_type, updated_at
+          ) VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(id) DO UPDATE SET
+            access_token = excluded.access_token,
+            refresh_token = excluded.refresh_token,
+            expires_at = excluded.expires_at,
+            token_type = excluded.token_type,
+            updated_at = CURRENT_TIMESTAMP
+        `,
+      )
+      .run(record.accessToken, record.refreshToken, record.expiresAt, record.tokenType);
+  }
+
+  async getOAuthTokens(): Promise<OAuthTokenRecord | undefined> {
+    const row = this.db.prepare("SELECT * FROM mal_oauth_tokens WHERE id = 1").get() as
+      | OAuthTokenRow
+      | undefined;
+    return row
+      ? {
+          accessToken: row.access_token,
+          refreshToken: row.refresh_token,
+          expiresAt: row.expires_at,
+          tokenType: row.token_type,
+        }
+      : undefined;
   }
 
   async findByDedupKey(dedupKey: string): Promise<BridgeOutboxItem | undefined> {
@@ -307,6 +426,24 @@ interface OutboxRow {
   last_error: string | null;
   created_at: string;
   updated_at: string;
+}
+
+interface SettingRow {
+  key: string;
+  value: string;
+}
+
+interface OAuthStateRow {
+  state: string;
+  code_verifier: string;
+  created_at: string;
+}
+
+interface OAuthTokenRow {
+  access_token: string;
+  refresh_token: string;
+  expires_at: string;
+  token_type: string;
 }
 
 function mappingFromRow(row: MappingRow): SeriesMappingRecord {
