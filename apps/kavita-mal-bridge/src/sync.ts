@@ -100,19 +100,44 @@ export async function runBridgeSyncOnce(input: {
     });
 
     if (!update) continue;
-    await enqueueMalUpdate(input.store, {
+    const queued = await enqueueMalUpdate(input.store, {
       kavitaSeriesId: item.kavitaSeriesId,
       malId: mapping.malId,
       update,
       reason: "kavita-progress-poll",
     });
-    result.updatesQueued++;
+    if (queued.wasCreated) {
+      result.updatesQueued++;
+      await input.store.audit({
+        type: "progress",
+        kavitaSeriesId: item.kavitaSeriesId,
+        message: `Queued MAL progress update for ${mapping.malId}.`,
+        dataJson: JSON.stringify({
+          malId: mapping.malId,
+          update,
+          reason: queued.reason,
+        }),
+      });
+    }
   }
 
   const outboxResult = await processOutboxOnce({
     store: input.store,
     dryRun: input.dryRun,
     updateMal: (malId, update) => input.mal.updateProgress(malId, update),
+    audit: (record) =>
+      input.store.audit({
+        type: "outbox",
+        kavitaSeriesId: record.kavitaSeriesId,
+        message: record.message,
+        dataJson: JSON.stringify({
+          malId: record.malId,
+          update: record.update,
+          status: record.status,
+          attempts: record.attempts,
+          reason: record.reason,
+        }),
+      }),
   });
   result.outboxProcessed = outboxResult.processed;
   result.outboxSucceeded = outboxResult.succeeded;

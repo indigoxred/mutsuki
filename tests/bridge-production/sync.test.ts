@@ -52,6 +52,23 @@ test("sync polls Kavita, auto-links deterministic MAL metadata, and queues monot
     assert.equal(result.outboxSucceeded, 1);
     assert.equal(malUpdates.length, 0);
     assert.equal((await store.getSeriesMapping(9))?.malId, 555);
+    const audit = await store.listAuditLogs();
+    assert.ok(
+      audit.some(
+        (entry) =>
+          entry.type === "progress" &&
+          entry.kavitaSeriesId === 9 &&
+          entry.message.includes("Queued MAL progress update"),
+      ),
+    );
+    assert.ok(
+      audit.some(
+        (entry) =>
+          entry.type === "outbox" &&
+          entry.kavitaSeriesId === 9 &&
+          entry.message.includes("Dry-run MAL update recorded"),
+      ),
+    );
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

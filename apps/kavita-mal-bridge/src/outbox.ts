@@ -24,6 +24,20 @@ export interface OutboxStore {
   recordPushedProgress?(kavitaSeriesId: number, update: BridgeMalProgressUpdate): Promise<void>;
 }
 
+export interface EnqueuedMalUpdate extends BridgeOutboxItem {
+  wasCreated: boolean;
+}
+
+export interface OutboxAuditRecord {
+  kavitaSeriesId: number;
+  malId: number;
+  message: string;
+  update: BridgeMalProgressUpdate;
+  status: OutboxStatus;
+  attempts: number;
+  reason: string;
+}
+
 export async function enqueueMalUpdate(
   store: OutboxStore,
   input: {
@@ -33,10 +47,10 @@ export async function enqueueMalUpdate(
     reason: string;
     now?: Date;
   },
-): Promise<BridgeOutboxItem> {
+): Promise<EnqueuedMalUpdate> {
   const dedupKey = stableDedupKey(input);
   const existing = await store.findByDedupKey(dedupKey);
-  if (existing) return existing;
+  if (existing) return { ...existing, wasCreated: false };
   const now = (input.now ?? new Date()).toISOString();
   const item: BridgeOutboxItem = {
     id: `outbox:${hashString(dedupKey)}`,
@@ -51,7 +65,7 @@ export async function enqueueMalUpdate(
     updatedAt: now,
   };
   await store.insert(item);
-  return item;
+  return { ...item, wasCreated: true };
 }
 
 export async function processOutboxOnce(input: {
@@ -63,6 +77,7 @@ export async function processOutboxOnce(input: {
   dryRun: boolean;
   limit?: number;
   now?: () => Date;
+  audit?: (record: OutboxAuditRecord) => Promise<void>;
 }): Promise<{ processed: number; succeeded: number; failed: number }> {
   const pending = await input.store.pending(input.limit ?? 25);
   let succeeded = 0;
@@ -70,7 +85,9 @@ export async function processOutboxOnce(input: {
 
   for (const item of pending) {
     if (input.dryRun) {
-      await input.store.update(markSucceeded(item, input.now?.() ?? new Date(), "dry-run"));
+      const updated = markSucceeded(item, input.now?.() ?? new Date(), "dry-run");
+      await input.store.update(updated);
+      await auditOutbox(input.audit, updated, "Dry-run MAL update recorded.");
       succeeded++;
       continue;
     }
@@ -78,20 +95,40 @@ export async function processOutboxOnce(input: {
     const result = await input.updateMal(item.malId, item.update);
     if (result.ok) {
       await input.store.recordPushedProgress?.(item.kavitaSeriesId, item.update);
-      await input.store.update(markSucceeded(item, input.now?.() ?? new Date(), ""));
+      const updated = markSucceeded(item, input.now?.() ?? new Date(), "");
+      await input.store.update(updated);
+      await auditOutbox(input.audit, updated, "MAL update pushed.");
       succeeded++;
     } else if (!result.retryable) {
-      await input.store.update(markSucceeded(item, input.now?.() ?? new Date(), result.message));
+      const updated = markSucceeded(item, input.now?.() ?? new Date(), result.message);
+      await input.store.update(updated);
+      await auditOutbox(input.audit, updated, "Permanent MAL update failure recorded.");
       succeeded++;
     } else {
-      await input.store.update(
-        markFailedRetryable(item, input.now?.() ?? new Date(), result.message),
-      );
+      const updated = markFailedRetryable(item, input.now?.() ?? new Date(), result.message);
+      await input.store.update(updated);
+      await auditOutbox(input.audit, updated, "Retryable MAL update failure.");
       failed++;
     }
   }
 
   return { processed: pending.length, succeeded, failed };
+}
+
+async function auditOutbox(
+  audit: ((record: OutboxAuditRecord) => Promise<void>) | undefined,
+  item: BridgeOutboxItem,
+  message: string,
+): Promise<void> {
+  await audit?.({
+    kavitaSeriesId: item.kavitaSeriesId,
+    malId: item.malId,
+    message,
+    update: item.update,
+    status: item.status,
+    attempts: item.attempts,
+    reason: item.reason,
+  });
 }
 
 function markSucceeded(
