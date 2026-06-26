@@ -302,7 +302,9 @@ function safeErrorBody(error: unknown): { error: string } {
 
 function syncErrorStatus(error: unknown): number {
   if (!(error instanceof Error)) return 500;
-  return /not configured|before running sync|settings are not configured/iu.test(error.message)
+  return /not configured|before running sync|settings are not configured|re-authorize MAL/iu.test(
+    error.message,
+  )
     ? 409
     : 500;
 }

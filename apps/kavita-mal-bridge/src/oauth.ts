@@ -11,6 +11,18 @@ export type OAuthTransport = (
   request: OAuthTransportRequest,
 ) => Promise<{ status: number; body: string }>;
 
+export class MalOAuthTokenError extends Error {
+  readonly status: number;
+  readonly retryable: boolean;
+
+  constructor(status: number) {
+    super(`MAL OAuth token request failed with status ${status}.`);
+    this.name = "MalOAuthTokenError";
+    this.status = status;
+    this.retryable = status === 429 || status >= 500;
+  }
+}
+
 export function buildMalAuthorizationRequest(input: {
   clientId: string;
   redirectUri: string;
@@ -101,7 +113,7 @@ function tokenFromResponse(
   now: Date,
 ): OAuthTokenRecord {
   if (response.status !== 200) {
-    throw new Error(`MAL OAuth token request failed with status ${response.status}.`);
+    throw new MalOAuthTokenError(response.status);
   }
   const json = JSON.parse(response.body) as {
     access_token?: string;

@@ -1,5 +1,5 @@
 import type { BridgeConfig } from "./config.js";
-import { refreshMalAccessToken, type OAuthTransport } from "./oauth.js";
+import { MalOAuthTokenError, refreshMalAccessToken, type OAuthTransport } from "./oauth.js";
 import type { SqliteBridgeStore } from "./storage.js";
 
 export async function effectiveBridgeConfig(
@@ -46,18 +46,56 @@ export async function refreshStoredMalTokenIfNeeded(input: {
   const settings = await input.store.listSettings();
   const clientId = settings.malClientId ?? input.baseConfig.malClientId;
   if (!clientId) return;
-  const refreshed = await refreshMalAccessToken({
+  const refreshed = await refreshStoredTokenOrHandleFailure({
     clientId,
-    clientSecret: settings.malClientSecret ?? input.baseConfig.malClientSecret,
+    clientSecret: settings.malClientSecret ?? input.baseConfig.malClientSecret ?? "",
     refreshToken: tokens.refreshToken,
-    now: () => now,
+    now,
     transport: input.transport,
+    store: input.store,
   });
   await input.store.saveOAuthTokens(refreshed);
   await input.store.audit({
     type: "system",
     message: "MAL OAuth token refreshed.",
   });
+}
+
+async function refreshStoredTokenOrHandleFailure(input: {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  now: Date;
+  transport?: OAuthTransport;
+  store: SqliteBridgeStore;
+}) {
+  try {
+    return await refreshMalAccessToken({
+      clientId: input.clientId,
+      clientSecret: input.clientSecret,
+      refreshToken: input.refreshToken,
+      now: () => input.now,
+      transport: input.transport,
+    });
+  } catch (error) {
+    if (!(error instanceof MalOAuthTokenError)) throw error;
+    if (error.retryable) {
+      await input.store.audit({
+        type: "system",
+        message: `MAL OAuth refresh failed with retryable status ${error.status}.`,
+      });
+      throw new Error(`MAL OAuth token refresh failed with retryable status ${error.status}.`);
+    }
+
+    await input.store.clearOAuthTokens();
+    await input.store.audit({
+      type: "system",
+      message: "MAL OAuth refresh failed permanently; re-authorize MAL.",
+    });
+    throw new Error(
+      "MAL OAuth authorization expired or was revoked. Re-authorize MAL before running sync.",
+    );
+  }
 }
 
 function settingBoolean(value: string | undefined, fallback: boolean): boolean {

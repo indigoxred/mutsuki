@@ -75,6 +75,9 @@ Manual and scheduled sync runs require both Kavita configuration and a stored MA
 bridge will not poll the full library for mappings until MAL is authorized.
 If the wrong MAL account is authorized or MAL rejects the stored token, use **Disconnect MAL** and
 then run **Authorize MAL** again.
+If MAL reports a permanent refresh failure for the stored OAuth token, the bridge clears that token
+and asks you to authorize MAL again. Retryable MAL token endpoint failures keep the existing token so
+the next scheduled/manual sync can try again.
 
 ## API
 

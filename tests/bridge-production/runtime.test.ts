@@ -119,3 +119,82 @@ test("expired stored MAL OAuth token refreshes before sync uses it", async () =>
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("permanent MAL OAuth refresh failure clears stored tokens and asks for reauthorization", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-runtime-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+
+  try {
+    await store.saveSetting("malClientId", "client-id");
+    await store.saveOAuthTokens({
+      accessToken: "expired-access",
+      refreshToken: "revoked-refresh",
+      expiresAt: "2026-06-26T00:00:00.000Z",
+      tokenType: "Bearer",
+    });
+
+    await assert.rejects(
+      () =>
+        refreshStoredMalTokenIfNeeded({
+          baseConfig: bridgeConfigFromEnv({}),
+          store,
+          now: () => new Date("2026-06-26T00:01:00.000Z"),
+          transport: async () => ({
+            status: 400,
+            body: JSON.stringify({ error: "invalid_grant" }),
+          }),
+        }),
+      /Re-authorize MAL before running sync/u,
+    );
+
+    assert.equal(await store.getOAuthTokens(), undefined);
+    const audit = await store.listAuditLogs();
+    assert.ok(
+      audit.some(
+        (entry) =>
+          entry.type === "system" &&
+          entry.message.includes("MAL OAuth refresh failed") &&
+          entry.message.includes("re-authorize"),
+      ),
+    );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("retryable MAL OAuth refresh failure preserves stored tokens", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-runtime-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+
+  try {
+    await store.saveSetting("malClientId", "client-id");
+    await store.saveOAuthTokens({
+      accessToken: "expired-access",
+      refreshToken: "refresh-token",
+      expiresAt: "2026-06-26T00:00:00.000Z",
+      tokenType: "Bearer",
+    });
+
+    await assert.rejects(
+      () =>
+        refreshStoredMalTokenIfNeeded({
+          baseConfig: bridgeConfigFromEnv({}),
+          store,
+          now: () => new Date("2026-06-26T00:01:00.000Z"),
+          transport: async () => ({
+            status: 500,
+            body: "server unavailable",
+          }),
+        }),
+      /retryable status 500/u,
+    );
+
+    assert.equal((await store.getOAuthTokens())?.accessToken, "expired-access");
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
