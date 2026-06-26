@@ -26,6 +26,7 @@ import {
 import { BridgeScheduler, type BridgeSchedulerResult } from "./scheduler.js";
 import { runBridgeSyncOnce, type BridgeObservedSeries, type BridgeSyncResult } from "./sync.js";
 import { SqliteBridgeStore, type SeriesMappingRecord } from "./storage.js";
+import type { ScoredMalCandidate } from "./matching.js";
 
 export interface KavitaMalBridgeServerOptions {
   store: SqliteBridgeStore;
@@ -79,7 +80,8 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/unresolved-matches") {
-        await respondJson(response, { items: await options.store.listReviews() });
+        const items = (await options.store.listReviews()).map(reviewResponseItem);
+        await respondJson(response, { items });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/ignored-series") {
@@ -687,7 +689,8 @@ function trackingModeOption(
 function renderReviewRow(
   review: Awaited<ReturnType<SqliteBridgeStore["listReviews"]>>[number],
 ): string {
-  const candidate = firstReviewCandidate(review.candidatesJson);
+  const candidates = parseReviewCandidates(review.candidatesJson);
+  const candidate = firstReviewCandidate(candidates);
   return `<tr><td>${review.kavitaSeriesId}</td><td>${escapeHtml(review.title)}</td><td>${escapeHtml(review.reason)}</td><td>
     <form class="approval-form" data-endpoint="/api/unresolved-matches/${review.kavitaSeriesId}/approve">
       <input name="malId" type="number" min="1" placeholder="MAL ID" value="${candidate?.malId ?? ""}" />
@@ -700,12 +703,79 @@ function renderReviewRow(
       <input name="chapterOffset" type="number" step="1" value="0" />
       <input name="volumeOffset" type="number" step="1" value="0" />
       <button type="submit">Approve</button>
-      ${candidate ? `<p class="muted">Top candidate: ${escapeHtml(candidate.title ?? String(candidate.malId))}</p>` : ""}
+      ${renderReviewCandidates(candidates)}
     </form>
     <form class="ignore-form" data-endpoint="/api/unresolved-matches/${review.kavitaSeriesId}/ignore">
       <button type="submit">Ignore</button>
     </form>
   </td></tr>`;
+}
+
+function reviewResponseItem(
+  review: Awaited<ReturnType<SqliteBridgeStore["listReviews"]>>[number],
+): Record<string, unknown> {
+  return {
+    kavitaSeriesId: review.kavitaSeriesId,
+    title: review.title,
+    reason: review.reason,
+    createdAt: review.createdAt,
+    candidates: parseReviewCandidates(review.candidatesJson),
+  };
+}
+
+function parseReviewCandidates(candidatesJson: string): ScoredMalCandidate[] {
+  try {
+    const parsed = JSON.parse(candidatesJson) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.flatMap((item) => reviewCandidateFromUnknown(item));
+  } catch {
+    return [];
+  }
+}
+
+function reviewCandidateFromUnknown(item: unknown): ScoredMalCandidate[] {
+  if (typeof item !== "object" || item === null) return [];
+  const record = item as Record<string, unknown>;
+  const malId = Number(record.malId);
+  if (!Number.isSafeInteger(malId) || malId <= 0) return [];
+  const title = typeof record.title === "string" ? record.title : `MAL ${malId}`;
+  const confidence = Number(record.confidence);
+  const reasons = Array.isArray(record.reasons)
+    ? record.reasons.filter((reason): reason is string => typeof reason === "string")
+    : [];
+  return [
+    {
+      malId,
+      title,
+      confidence: Number.isFinite(confidence) ? confidence : 0,
+      reasons,
+      altTitles: Array.isArray(record.altTitles)
+        ? record.altTitles.filter((title): title is string => typeof title === "string")
+        : undefined,
+      authors: Array.isArray(record.authors)
+        ? record.authors.filter((author): author is string => typeof author === "string")
+        : undefined,
+      mediaType: typeof record.mediaType === "string" ? record.mediaType : undefined,
+      startYear: typeof record.startYear === "number" ? record.startYear : undefined,
+      volumes: typeof record.volumes === "number" ? record.volumes : undefined,
+      chapters: typeof record.chapters === "number" ? record.chapters : undefined,
+    },
+  ];
+}
+
+function firstReviewCandidate(candidates: ScoredMalCandidate[]): ScoredMalCandidate | undefined {
+  return candidates[0];
+}
+
+function renderReviewCandidates(candidates: ScoredMalCandidate[]): string {
+  if (candidates.length === 0) return `<p class="muted">No MAL candidates found.</p>`;
+  return `<ul class="muted">${candidates
+    .map((candidate) => {
+      const confidence = candidate.confidence.toFixed(2);
+      const reasons = candidate.reasons.length > 0 ? ` - ${candidate.reasons.join(", ")}` : "";
+      return `<li><code>${candidate.malId}</code> ${escapeHtml(candidate.title)} (${confidence}${escapeHtml(reasons)})</li>`;
+    })
+    .join("")}</ul>`;
 }
 
 function renderIgnoredRow(
@@ -716,22 +786,6 @@ function renderIgnoredRow(
       <button type="submit">Restore</button>
     </form>
   </td></tr>`;
-}
-
-function firstReviewCandidate(
-  candidatesJson: string,
-): { malId?: number; title?: string } | undefined {
-  try {
-    const parsed = JSON.parse(candidatesJson) as unknown;
-    if (!Array.isArray(parsed)) return undefined;
-    const candidate = parsed.find(
-      (item): item is { malId?: number; title?: string } =>
-        typeof item === "object" && item !== null && "malId" in item,
-    );
-    return candidate;
-  } catch {
-    return undefined;
-  }
 }
 
 async function respondJson(response: ServerResponse, body: unknown, status = 200): Promise<void> {

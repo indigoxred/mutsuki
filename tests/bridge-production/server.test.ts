@@ -16,7 +16,20 @@ test("bridge server exposes status and unresolved review API", async () => {
     kavitaSeriesId: 99,
     title: "Needs Review",
     reason: "ambiguous-or-low-confidence",
-    candidatesJson: "[]",
+    candidatesJson: JSON.stringify([
+      {
+        malId: 123,
+        title: "Likely Candidate",
+        confidence: 0.83,
+        reasons: ["similar-title", "author"],
+      },
+      {
+        malId: 456,
+        title: "Second Candidate",
+        confidence: 0.71,
+        reasons: ["similar-title"],
+      },
+    ]),
   });
   await store.ignoreSeries({
     kavitaSeriesId: 100,
@@ -61,6 +74,11 @@ test("bridge server exposes status and unresolved review API", async () => {
     assert.equal(status.ignored, 1);
     assert.equal(reviews.items.length, 1);
     assert.equal(reviews.items[0].title, "Needs Review");
+    assert.equal(reviews.items[0].candidates.length, 2);
+    assert.equal(reviews.items[0].candidates[0].malId, 123);
+    assert.equal(reviews.items[0].candidates[0].confidence, 0.83);
+    assert.equal(reviews.items[0].candidates[0].reasons[0], "similar-title");
+    assert.equal("candidatesJson" in reviews.items[0], false);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();
@@ -327,7 +345,10 @@ test("bridge home page exposes setup, OAuth, and review approval controls", asyn
     kavitaSeriesId: 77,
     title: "Needs Approval",
     reason: "ambiguous-or-low-confidence",
-    candidatesJson: JSON.stringify([{ malId: 123, title: "Candidate" }]),
+    candidatesJson: JSON.stringify([
+      { malId: 123, title: "Candidate One", confidence: 0.83, reasons: ["similar-title"] },
+      { malId: 456, title: "Candidate Two", confidence: 0.72, reasons: ["author"] },
+    ]),
   });
 
   const server = createKavitaMalBridgeServer({
@@ -354,6 +375,10 @@ test("bridge home page exposes setup, OAuth, and review approval controls", asyn
     assert.match(html, /name="kavitaBaseUrl"/u);
     assert.match(html, /\/api\/mal\/oauth\/start/u);
     assert.match(html, /\/api\/unresolved-matches\/77\/approve/u);
+    assert.match(html, /Candidate One/u);
+    assert.match(html, /Candidate Two/u);
+    assert.match(html, /0\.83/u);
+    assert.match(html, /similar-title/u);
     assert.doesNotMatch(html, /secret-key/u);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
