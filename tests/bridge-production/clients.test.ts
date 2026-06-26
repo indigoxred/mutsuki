@@ -207,6 +207,57 @@ test("Kavita client can request a bounded series page for progress preview", asy
   }
 });
 
+test("Kavita client uses library type when series media type is unknown", async () => {
+  const originalFetch = globalThis.fetch;
+  const seenUrls: string[] = [];
+  try {
+    globalThis.fetch = async (input, init) => {
+      const url =
+        input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+      seenUrls.push(url);
+      const headers = init?.headers as Record<string, string>;
+      assert.equal(headers["x-api-key"], "secret-key");
+
+      if (url === "https://read.example.test/api/Series/all-v2?pageNumber=0&pageSize=1") {
+        return new Response(JSON.stringify([{ id: 13, name: "1Q84", libraryId: 99 }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url === "https://read.example.test/api/Series/volumes?seriesId=13") {
+        return new Response(JSON.stringify([{ minNumber: 1, maxNumber: 1, chapters: [] }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (url === "https://read.example.test/api/Library/libraries") {
+        return new Response(JSON.stringify([{ id: 99, name: "Novels", type: 4 }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      throw new Error(`unexpected URL ${url}`);
+    };
+
+    const series = await createKavitaClient({
+      ...bridgeConfigFromEnv({}),
+      kavitaBaseUrl: "https://read.example.test",
+      kavitaApiKey: "secret-key",
+    }).listSeries({ limit: 1 });
+
+    assert.equal(series.length, 1);
+    assert.equal(series[0]?.contentType, "novel");
+    assert.equal(series[0]?.mediaType, "light_novel");
+    assert.ok(seenUrls.includes("https://read.example.test/api/Library/libraries"));
+    assert.doesNotMatch(JSON.stringify(series), /secret-key/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Kavita client keeps listing series when one volume progress request fails", async () => {
   const originalFetch = globalThis.fetch;
   try {

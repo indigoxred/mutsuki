@@ -34,7 +34,7 @@ export function createKavitaClient(config: BridgeConfig): BridgeKavitaClient {
         ? json
         : arrayFromObject(json, ["items", "series", "value"]);
       const series = records.flatMap((record) => observedSeriesFromKavita(record));
-      return mapWithConcurrency(series, 4, async (item) => {
+      const enriched = await mapWithConcurrency(series, 4, async (item) => {
         const progress = await observedProgressFromKavitaVolumes(
           baseUrl,
           config.kavitaApiKey,
@@ -59,6 +59,15 @@ export function createKavitaClient(config: BridgeConfig): BridgeKavitaClient {
           mediaType: progress.mediaType ?? item.mediaType,
         };
       });
+      if (!enriched.some((item) => item.contentType === undefined && item.kavitaLibraryId)) {
+        return enriched;
+      }
+      const libraries = await kavitaLibraryMediaById(baseUrl, config.kavitaApiKey).catch(
+        () => new Map<number, LibraryMediaInfo>(),
+      );
+      return enriched.map((item) =>
+        applyLibraryMedia(item, libraries.get(item.kavitaLibraryId ?? 0)),
+      );
     },
   };
 }
@@ -252,6 +261,7 @@ function observedSeriesFromKavita(record: unknown): BridgeObservedSeries[] {
   const id = numberField(record, "id", "seriesId", "kavitaSeriesId");
   const title = stringField(record, "name", "localizedName", "title");
   if (id === undefined || !title) return [];
+  const detectedMediaType = mediaType(record);
   return [
     {
       kavitaSeriesId: id,
@@ -264,11 +274,10 @@ function observedSeriesFromKavita(record: unknown): BridgeObservedSeries[] {
       authors: people(record),
       publicationYear: numberField(record, "releaseYear", "year"),
       volumeCount: numberField(record, "volumesCount", "volumeCount"),
-      mediaType: mediaType(record),
+      mediaType: detectedMediaType,
       webLinks: webLinks(record),
       externalIds: externalIds(record),
-      contentType:
-        mediaType(record) === "light_novel" || mediaType(record) === "novel" ? "novel" : "manga",
+      contentType: contentTypeFromMediaType(detectedMediaType),
       completedChapter: numberField(
         record,
         "latestReadChapter",
@@ -279,6 +288,14 @@ function observedSeriesFromKavita(record: unknown): BridgeObservedSeries[] {
       isSpecial: false,
     },
   ];
+}
+
+function contentTypeFromMediaType(
+  value: KavitaSeriesCandidate["mediaType"],
+): BridgeObservedSeries["contentType"] {
+  if (value === "light_novel" || value === "novel") return "novel";
+  if (value === "manga") return "manga";
+  return undefined;
 }
 
 async function observedProgressFromKavitaVolumes(
@@ -360,6 +377,54 @@ async function observedProgressFromKavitaVolumes(
     contentType: detectedStandaloneBook ? "novel" : undefined,
     mediaType: detectedStandaloneBook ? "light_novel" : undefined,
   };
+}
+
+interface LibraryMediaInfo {
+  contentType: BridgeObservedSeries["contentType"];
+  mediaType: KavitaSeriesCandidate["mediaType"];
+}
+
+async function kavitaLibraryMediaById(
+  baseUrl: string,
+  apiKey: string,
+): Promise<Map<number, LibraryMediaInfo>> {
+  const json = await kavitaJson(baseUrl, apiKey, "/api/Library/libraries", { method: "GET" });
+  const records = Array.isArray(json) ? json : arrayFromObject(json, ["items", "libraries"]);
+  const libraries = new Map<number, LibraryMediaInfo>();
+  for (const record of records) {
+    if (!isRecord(record)) continue;
+    const id = positiveNumberField(record, "id", "libraryId");
+    const media = libraryMediaInfo(record);
+    if (id !== undefined && media) libraries.set(id, media);
+  }
+  return libraries;
+}
+
+function applyLibraryMedia(
+  item: BridgeObservedSeries,
+  library: LibraryMediaInfo | undefined,
+): BridgeObservedSeries {
+  if (item.contentType !== undefined || !library) return item;
+  return {
+    ...item,
+    contentType: library.contentType,
+    mediaType:
+      item.mediaType === "unknown" || item.mediaType === undefined
+        ? library.mediaType
+        : item.mediaType,
+  };
+}
+
+function libraryMediaInfo(record: Record<string, unknown>): LibraryMediaInfo | undefined {
+  const type = numberField(record, "type", "Type");
+  const name = stringField(record, "name", "Name")?.toLowerCase() ?? "";
+  if (type === 2 || type === 4 || /\b(?:light\s*)?novels?\b|\bbooks?\b|\bepubs?\b/iu.test(name)) {
+    return { contentType: "novel", mediaType: "light_novel" };
+  }
+  if (type === 0 || type === 1 || /\bmanga\b|\bcomics?\b/iu.test(name)) {
+    return { contentType: "manga", mediaType: "manga" };
+  }
+  return undefined;
 }
 
 function areAllReadableChaptersComplete(chapters: unknown[]): boolean {
