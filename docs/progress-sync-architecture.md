@@ -118,6 +118,8 @@ includes:
 - monotonic high-water progress updates;
 - offsets and tracking policies;
 - retry/outbox tables for MAL writes;
+- dry-run processing that previews pending MAL writes without consuming them, so disabling dry-run
+  later can push the same queued updates;
 - manual requeue controls for failed outbox items after the operator fixes authorization, settings,
   or transient MAL/API failures;
 - scheduled polling with overlap prevention;

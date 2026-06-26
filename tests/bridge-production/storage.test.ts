@@ -85,8 +85,9 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     const outbox = await reopened.listOutbox(10);
     const outboxCounts = await reopened.outboxCounts();
     assert.equal(outbox.length, 1);
-    assert.equal(outbox[0]?.status, "succeeded");
-    assert.equal(outboxCounts.succeeded, 1);
+    assert.equal(outbox[0]?.status, "pending");
+    assert.equal(outboxCounts.pending, 1);
+    assert.equal(outboxCounts.succeeded, 0);
     assert.equal((await reopened.listReviews()).length, 1);
     assert.equal(await reopened.isSeriesIgnored(46), true);
     assert.equal((await reopened.listIgnoredSeries())[0]?.title, "Do Not Track");

@@ -27,7 +27,8 @@ read-action feasibility tests.
 - Manga defaults to chapter-and-volume tracking.
 - Light novels default to volume-only tracking.
 - Monotonic high-water MAL update planning with offsets.
-- Dry-run mode enabled by default.
+- Dry-run mode enabled by default; dry-run previews leave MAL outbox rows pending so disabling
+  dry-run later can still push the same updates.
 - Scheduled polling with overlap prevention and live poll-interval rescheduling from the setup UI.
 - Local Web/API status, setup, outbox, audit, and unresolved-match views.
 
@@ -66,9 +67,10 @@ http://192.168.50.138:6768/api/mal/oauth/callback
 ```
 
 After saving the MAL client settings, use **Authorize MAL** on the bridge page. Keep dry-run enabled
-until the UI shows the expected mappings and queued updates. Use **Check readiness** to verify the
-configured Kavita endpoint can be queried with a lightweight probe and the stored MAL token is
-accepted before running a sync.
+until the UI shows the expected mappings and queued updates. Dry-run syncs preview pending MAL writes
+without marking them succeeded, so the same outbox rows can be pushed after you disable dry-run. Use
+**Check readiness** to verify the configured Kavita endpoint can be queried with a lightweight probe
+and the stored MAL token is accepted before running a sync.
 Manual and scheduled sync runs require both Kavita configuration and a stored MAL OAuth token; the
 bridge will not poll the full library for mappings until MAL is authorized.
 If the wrong MAL account is authorized or MAL rejects the stored token, use **Disconnect MAL** and

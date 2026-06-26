@@ -46,6 +46,7 @@ export interface BridgeSyncResult {
   reviewQueued: number;
   updatesQueued: number;
   outboxProcessed: number;
+  outboxPreviewed?: number;
   outboxSucceeded: number;
   outboxFailed: number;
 }
@@ -63,6 +64,7 @@ export async function runBridgeSyncOnce(input: {
     reviewQueued: 0,
     updatesQueued: 0,
     outboxProcessed: 0,
+    outboxPreviewed: 0,
     outboxSucceeded: 0,
     outboxFailed: 0,
   };
@@ -142,6 +144,7 @@ export async function runBridgeSyncOnce(input: {
       }),
   });
   result.outboxProcessed = outboxResult.processed;
+  result.outboxPreviewed = outboxResult.previewed;
   result.outboxSucceeded = outboxResult.succeeded;
   result.outboxFailed = outboxResult.failed;
   return result;

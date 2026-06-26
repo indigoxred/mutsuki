@@ -78,17 +78,16 @@ export async function processOutboxOnce(input: {
   limit?: number;
   now?: () => Date;
   audit?: (record: OutboxAuditRecord) => Promise<void>;
-}): Promise<{ processed: number; succeeded: number; failed: number }> {
+}): Promise<{ processed: number; previewed: number; succeeded: number; failed: number }> {
   const pending = await input.store.pending(input.limit ?? 25);
+  let previewed = 0;
   let succeeded = 0;
   let failed = 0;
 
   for (const item of pending) {
     if (input.dryRun) {
-      const updated = markSucceeded(item, input.now?.() ?? new Date(), "dry-run");
-      await input.store.update(updated);
-      await auditOutbox(input.audit, updated, "Dry-run MAL update recorded.");
-      succeeded++;
+      await auditOutbox(input.audit, item, "Dry-run MAL update previewed.");
+      previewed++;
       continue;
     }
 
@@ -112,7 +111,7 @@ export async function processOutboxOnce(input: {
     }
   }
 
-  return { processed: pending.length, succeeded, failed };
+  return { processed: pending.length, previewed, succeeded, failed };
 }
 
 async function auditOutbox(

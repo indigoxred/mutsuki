@@ -88,7 +88,8 @@ container is reachable.
    - **Audit Log**
    - existing mappings and manual overrides
 
-8. Disable dry-run only after the planned MAL updates match what you expect.
+8. Disable dry-run only after the planned MAL updates match what you expect. Dry-run leaves outbox
+   rows pending, so the same queued updates can be pushed after you switch to live writes.
 
 ## Safe Operating Rules
 

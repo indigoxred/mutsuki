@@ -28,8 +28,9 @@ test("outbox enqueue is idempotent for the same desired MAL update", async () =>
   assert.equal(store.items.length, 1);
 });
 
-test("outbox marks dry-run writes successful without calling MAL", async () => {
+test("outbox previews dry-run writes without consuming pending MAL updates", async () => {
   const store = new MemoryOutboxStore();
+  const audit: string[] = [];
   await enqueueMalUpdate(store, {
     kavitaSeriesId: 7,
     malId: 100,
@@ -43,12 +44,32 @@ test("outbox marks dry-run writes successful without calling MAL", async () => {
     updateMal: async () => {
       throw new Error("should not be called");
     },
+    audit: async (record) => {
+      audit.push(record.message);
+    },
   });
 
   assert.equal(result.processed, 1);
-  assert.equal(result.succeeded, 1);
-  assert.equal(store.items[0]?.status, "succeeded");
+  assert.equal(result.previewed, 1);
+  assert.equal(result.succeeded, 0);
+  assert.equal(store.items[0]?.status, "pending");
   assert.equal(store.pushed.length, 0);
+  assert.ok(audit.some((message) => message.includes("Dry-run MAL update previewed")));
+
+  const liveResult = await processOutboxOnce({
+    store,
+    dryRun: false,
+    updateMal: async () => ({ ok: true }),
+  });
+
+  assert.equal(liveResult.succeeded, 1);
+  assert.equal(store.items[0]?.status, "succeeded");
+  assert.deepEqual(store.pushed, [
+    {
+      kavitaSeriesId: 7,
+      update: { num_chapters_read: 12 },
+    },
+  ]);
 });
 
 test("outbox records high-water pushed progress after successful MAL writes", async () => {
