@@ -88,6 +88,8 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     assert.equal((await reopened.listReviews()).length, 1);
     assert.equal(await reopened.isSeriesIgnored(46), true);
     assert.equal((await reopened.listIgnoredSeries())[0]?.title, "Do Not Track");
+    await reopened.restoreIgnoredSeries(46);
+    assert.equal(await reopened.isSeriesIgnored(46), false);
     assert.equal((await reopened.listAuditLogs()).length, 1);
     assert.equal(await reopened.getSetting("kavitaBaseUrl"), "https://read.example.test");
     assert.equal((await reopened.getOAuthState("state-1"))?.codeVerifier, "verifier-1");

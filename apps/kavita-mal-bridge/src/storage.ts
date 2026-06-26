@@ -263,6 +263,10 @@ export class SqliteBridgeStore implements OutboxStore {
     }));
   }
 
+  async restoreIgnoredSeries(kavitaSeriesId: number): Promise<void> {
+    this.db.prepare("DELETE FROM ignored_series WHERE kavita_series_id = ?").run(kavitaSeriesId);
+  }
+
   async audit(record: AuditRecord): Promise<void> {
     this.db
       .prepare(

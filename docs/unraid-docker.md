@@ -96,7 +96,7 @@ container is reachable.
   bridge is writing to MAL. Pick one writer so progress updates do not race.
 - Low-confidence or conflicting matches stay in the review queue and are not pushed to MAL.
 - If a Kavita series should never sync to MAL, use the review queue's ignore action instead of
-  approving a guessed MAL ID.
+  approving a guessed MAL ID. Ignored series can be restored later from the bridge UI.
 - MAL progress is monotonic by default. The bridge does not automatically reduce MAL chapter or
   volume counts.
 - Light novels default to volume-only tracking unless a mapping policy says otherwise.

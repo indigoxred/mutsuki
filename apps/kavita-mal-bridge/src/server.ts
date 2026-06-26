@@ -62,6 +62,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           pollIntervalSeconds: settingNumber(settings.pollIntervalSeconds),
           mappings: (await options.store.listSeriesMappings()).length,
           unresolved: (await options.store.listReviews()).length,
+          ignored: (await options.store.listIgnoredSeries()).length,
           outbox,
           scheduler: schedulerStatus(options),
           audit: (await options.store.listAuditLogs(25)).slice(0, 10),
@@ -197,6 +198,18 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           type: "review",
           kavitaSeriesId,
           message: "Manual review ignored; series will not be synced to MAL.",
+        });
+        await respondJson(response, { ok: true });
+        return;
+      }
+      const restoreIgnored = /^\/api\/ignored-series\/(\d+)\/restore$/u.exec(url.pathname);
+      if (request.method === "POST" && restoreIgnored?.[1]) {
+        const kavitaSeriesId = Number(restoreIgnored[1]);
+        await options.store.restoreIgnoredSeries(kavitaSeriesId);
+        await options.store.audit({
+          type: "review",
+          kavitaSeriesId,
+          message: "Manually ignored series restored to sync eligibility.",
         });
         await respondJson(response, { ok: true });
         return;
@@ -435,7 +448,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   <h2>Ignored Series</h2>
   <p>${ignored.length} Kavita series are manually excluded from MAL sync.</p>
   <table>
-    <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Created</th></tr></thead>
+    <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Created</th><th>Restore</th></tr></thead>
     <tbody>${ignored.map(renderIgnoredRow).join("")}</tbody>
   </table>
   <h2>Recent Audit</h2>
@@ -497,6 +510,17 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
           body: "{}",
         });
         status.textContent = response.ok ? "Series ignored." : "Ignore failed.";
+      });
+    }
+    for (const form of document.querySelectorAll(".restore-form")) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch(event.currentTarget.dataset.endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        status.textContent = response.ok ? "Series restored." : "Restore failed.";
       });
     }
     for (const form of document.querySelectorAll(".mapping-form")) {
@@ -577,7 +601,11 @@ function renderReviewRow(
 function renderIgnoredRow(
   ignored: Awaited<ReturnType<SqliteBridgeStore["listIgnoredSeries"]>>[number],
 ): string {
-  return `<tr><td>${ignored.kavitaSeriesId}</td><td>${escapeHtml(ignored.title)}</td><td>${escapeHtml(ignored.reason)}</td><td>${escapeHtml(ignored.createdAt)}</td></tr>`;
+  return `<tr><td>${ignored.kavitaSeriesId}</td><td>${escapeHtml(ignored.title)}</td><td>${escapeHtml(ignored.reason)}</td><td>${escapeHtml(ignored.createdAt)}</td><td>
+    <form class="restore-form" data-endpoint="/api/ignored-series/${ignored.kavitaSeriesId}/restore">
+      <button type="submit">Restore</button>
+    </form>
+  </td></tr>`;
 }
 
 function firstReviewCandidate(

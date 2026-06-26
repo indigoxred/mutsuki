@@ -16,7 +16,7 @@ read-action feasibility tests.
 - Deterministic MAL matching from existing Kavita MAL URLs/IDs and AniList IDs/links.
 - Strict high-confidence title matching.
 - Review queue and manual approval controls for ambiguous or low-confidence matches.
-- Manual ignore controls for unresolved series which should not sync to MAL.
+- Manual ignore and restore controls for unresolved series which should not sync to MAL.
 - Manual override controls for existing mappings, offsets, and tracking policies.
 - Lightweight Kavita readiness checks and MAL OAuth authorization checks.
 - Manga defaults to chapter-and-volume tracking.

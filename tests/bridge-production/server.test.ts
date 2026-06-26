@@ -18,6 +18,11 @@ test("bridge server exposes status and unresolved review API", async () => {
     reason: "ambiguous-or-low-confidence",
     candidatesJson: "[]",
   });
+  await store.ignoreSeries({
+    kavitaSeriesId: 100,
+    title: "Ignored Review",
+    reason: "manual-ignore",
+  });
 
   const server = createKavitaMalBridgeServer({
     store,
@@ -53,6 +58,7 @@ test("bridge server exposes status and unresolved review API", async () => {
     assert.equal(status.dryRun, true);
     assert.equal(status.scheduler.intervalSeconds, 600);
     assert.equal(status.scheduler.lastResult.skipped, false);
+    assert.equal(status.ignored, 1);
     assert.equal(reviews.items.length, 1);
     assert.equal(reviews.items[0].title, "Needs Review");
   } finally {
@@ -322,6 +328,55 @@ test("bridge server can ignore an unresolved match without a MAL id", async () =
     assert.equal(await store.isSeriesIgnored(101), true);
     assert.equal(ignored.items[0].title, "No MAL Entry");
     assert.equal(ignored.items[0].reason, "manual-ignore");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server can restore an ignored series to sync eligibility", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.ignoreSeries({
+    kavitaSeriesId: 102,
+    title: "Restore Me",
+    reason: "manual-ignore",
+  });
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    await postJson(`http://127.0.0.1:${port}/api/ignored-series/102/restore`, {});
+
+    const ignored = await fetchJson(`http://127.0.0.1:${port}/api/ignored-series`);
+    const audit = await store.listAuditLogs();
+    assert.equal(await store.isSeriesIgnored(102), false);
+    assert.equal(ignored.items.length, 0);
+    assert.ok(
+      audit.some(
+        (entry) =>
+          entry.type === "review" &&
+          entry.kavitaSeriesId === 102 &&
+          entry.message.includes("restored"),
+      ),
+    );
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();
