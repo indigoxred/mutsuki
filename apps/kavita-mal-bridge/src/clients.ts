@@ -34,16 +34,24 @@ export function createKavitaClient(config: BridgeConfig): BridgeKavitaClient {
           baseUrl,
           config.kavitaApiKey,
           item.kavitaSeriesId,
+          item.title,
         ).catch(
-          (): Pick<BridgeObservedSeries, "completedChapter" | "completedVolume"> => ({
+          (): Pick<
+            BridgeObservedSeries,
+            "completedChapter" | "completedVolume" | "contentType" | "mediaType"
+          > => ({
             completedChapter: undefined,
             completedVolume: undefined,
+            contentType: undefined,
+            mediaType: undefined,
           }),
         );
         return {
           ...item,
           completedChapter: progress.completedChapter ?? item.completedChapter,
           completedVolume: progress.completedVolume ?? item.completedVolume,
+          contentType: progress.contentType ?? item.contentType,
+          mediaType: progress.mediaType ?? item.mediaType,
         };
       });
     },
@@ -237,7 +245,10 @@ async function observedProgressFromKavitaVolumes(
   baseUrl: string,
   apiKey: string,
   seriesId: number,
-): Promise<Pick<BridgeObservedSeries, "completedChapter" | "completedVolume">> {
+  seriesTitle: string,
+): Promise<
+  Pick<BridgeObservedSeries, "completedChapter" | "completedVolume" | "contentType" | "mediaType">
+> {
   const json = await kavitaJson(
     baseUrl,
     apiKey,
@@ -247,6 +258,7 @@ async function observedProgressFromKavitaVolumes(
   const volumes = Array.isArray(json) ? json : arrayFromObject(json, ["items", "volumes", "value"]);
   let completedChapter: number | undefined;
   let completedVolume: number | undefined;
+  let detectedStandaloneBook = false;
 
   for (const volume of volumes) {
     if (!isRecord(volume)) continue;
@@ -262,9 +274,24 @@ async function observedProgressFromKavitaVolumes(
       "name",
       "Name",
     );
+    const fallbackVolumeNumber = parsedVolumeFromCandidates(
+      seriesTitle,
+      stringField(volume, "name", "Name", "range", "Range"),
+      ...chapters
+        .filter(isRecord)
+        .flatMap((chapter) => [
+          stringField(chapter, "range", "Range", "title", "Title", "name", "Name"),
+        ]),
+    );
+    const resolvedVolumeNumber = volumeNumber ?? fallbackVolumeNumber;
 
     if (isCompletedReadItem(volume) || areAllReadableChaptersComplete(chapters)) {
-      completedVolume = maxDefined(completedVolume, volumeNumber);
+      completedVolume = maxDefined(completedVolume, resolvedVolumeNumber);
+    }
+
+    if (isCompletedStandaloneBookVolume(volume, chapters)) {
+      detectedStandaloneBook = true;
+      completedVolume = maxDefined(completedVolume, resolvedVolumeNumber);
     }
 
     for (const chapter of chapters) {
@@ -287,7 +314,12 @@ async function observedProgressFromKavitaVolumes(
     }
   }
 
-  return { completedChapter, completedVolume };
+  return {
+    completedChapter,
+    completedVolume,
+    contentType: detectedStandaloneBook ? "novel" : undefined,
+    mediaType: detectedStandaloneBook ? "light_novel" : undefined,
+  };
 }
 
 function areAllReadableChaptersComplete(chapters: unknown[]): boolean {
@@ -297,6 +329,21 @@ function areAllReadableChaptersComplete(chapters: unknown[]): boolean {
   return (
     readable.length > 0 &&
     readable.every((chapter) => isRecord(chapter) && isCompletedReadItem(chapter))
+  );
+}
+
+function isCompletedStandaloneBookVolume(
+  volume: Record<string, unknown>,
+  chapters: unknown[],
+): boolean {
+  const volumeNumber = numberField(volume, "minNumber", "MinNumber", "maxNumber", "MaxNumber");
+  const hasSentinelVolume = volumeNumber === -100000;
+  const chapterRecords = chapters.filter(isRecord);
+  return (
+    hasSentinelVolume &&
+    chapterRecords.length > 0 &&
+    chapterRecords.every((chapter) => booleanField(chapter, "isSpecial", "IsSpecial")) &&
+    (isCompletedReadItem(volume) || chapterRecords.some((chapter) => isCompletedReadItem(chapter)))
   );
 }
 
@@ -370,6 +417,22 @@ function positiveNumberField(
 ): number | undefined {
   const value = numberField(record, ...keys);
   return value !== undefined && value > 0 ? value : undefined;
+}
+
+function parsedVolumeFromCandidates(...candidates: (string | undefined)[]): number | undefined {
+  for (const candidate of candidates) {
+    const parsed = parseExplicitVolumeNumber(candidate);
+    if (parsed !== undefined) return parsed;
+  }
+  return undefined;
+}
+
+function parseExplicitVolumeNumber(input: string | undefined): number | undefined {
+  if (!input) return undefined;
+  const match = /\b(?:volume|vol\.?|v|book|part)\s*([0-9]+(?:\.[0-9]+)?)/iu.exec(input);
+  if (!match?.[1]) return undefined;
+  const value = Number(match[1]);
+  return Number.isFinite(value) && value > 0 && value < 10000 ? value : undefined;
 }
 
 function booleanField(record: Record<string, unknown>, ...keys: string[]): boolean {

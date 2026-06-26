@@ -92,7 +92,8 @@ function normalizeChapter(
 function normalizeWholeNumber(value: number | undefined, offset: number): number | undefined {
   if (value === undefined || !Number.isFinite(value)) return undefined;
   const withOffset = value + offset;
-  return Number.isInteger(withOffset) && withOffset > 0 ? withOffset : undefined;
+  const whole = Math.floor(withOffset);
+  return whole > 0 ? whole : undefined;
 }
 
 function capToKnownTotal(value: number, total: number): number {

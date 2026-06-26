@@ -17,7 +17,7 @@ read-action feasibility tests.
 - Strict high-confidence title matching.
 - Review queue and manual approval controls for ambiguous or low-confidence matches.
 - Manual override controls for existing mappings, offsets, and tracking policies.
-- Readiness checks for Kavita metadata extraction and MAL OAuth authorization.
+- Lightweight Kavita readiness checks and MAL OAuth authorization checks.
 - Manga defaults to chapter-and-volume tracking.
 - Light novels default to volume-only tracking.
 - Monotonic high-water MAL update planning with offsets.
@@ -61,7 +61,8 @@ http://192.168.50.138:6768/api/mal/oauth/callback
 
 After saving the MAL client settings, use **Authorize MAL** on the bridge page. Keep dry-run enabled
 until the UI shows the expected mappings and queued updates. Use **Check readiness** to verify the
-configured Kavita endpoint can be queried and the stored MAL token is accepted before running a sync.
+configured Kavita endpoint can be queried with a lightweight probe and the stored MAL token is
+accepted before running a sync.
 Manual and scheduled sync runs require both Kavita configuration and a stored MAL OAuth token; the
 bridge will not poll the full library for mappings until MAL is authorized.
 

@@ -109,19 +109,27 @@ includes:
 - deterministic MAL ID/URL matching from existing Kavita external metadata;
 - high-confidence fallback search matching;
 - unresolved match review, manual approval, and existing-mapping override UI/API;
-- Kavita/MAL readiness checks which verify Kavita metadata extraction and MAL OAuth authorization
-  without mutating progress;
+- lightweight Kavita readiness checks and MAL OAuth authorization checks without mutating progress;
 - monotonic high-water progress updates;
 - offsets and tracking policies;
 - retry/outbox tables for MAL writes;
 - scheduled polling with overlap prevention;
 - audit logging.
 - progress extraction from current Kavita `VolumeDto`/`ChapterDto` fields via
-  `/api/Series/volumes?seriesId=...`, including fully read volume/chapter detection and ignoring
-  special chapters for chapter high-water marks.
+  `/api/Series/volumes?seriesId=...`, including fully read volume/chapter detection, standalone
+  EPUB sentinel volume detection, and ignoring special chapters for chapter high-water marks.
 
-The next hardening pass should validate those progress values against the user's live Kavita server
-and then improve the Web UI around filtering, searching, and bulk-editing mappings.
+Live validation on 2026-06-26 against the user's Kavita server confirmed:
+
+- readiness uses a bounded `pageSize=1` series probe and does not fan out to every volume;
+- full progress extraction can read the live library without writing to Kavita or MAL;
+- standalone EPUB/light-novel rows may appear as special sentinel chapters with volume identity in
+  titles such as `Volume2` or `Volume10.5`, and the bridge derives volume progress from those
+  markers while keeping chapter progress unset;
+- decimal physical volumes are floored conservatively for MAL's integer volume progress field.
+
+The next hardening pass should improve the Web UI around filtering, searching, and bulk-editing
+mappings.
 
 Default policies:
 

@@ -7,3 +7,7 @@
 - Automatic MAL matching is implemented only in the Docker bridge. It auto-links deterministic
   Kavita MAL metadata and high-confidence title matches; ambiguous or low-confidence matches remain
   in the review queue and are not written to MAL until approved.
+- Kavita sync reliability depends on Kavita's SQLite database and appdata storage being healthy.
+  Live testing on 2026-06-26 found intermittent Kavita `SQLite Error 10: disk I/O error` responses
+  while the Unraid cache device was logging repeated BTRFS checksum corruption. The bridge reduces
+  unnecessary readiness load, but it cannot repair server-side storage corruption.

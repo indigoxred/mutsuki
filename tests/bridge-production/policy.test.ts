@@ -61,6 +61,19 @@ test("planned MAL updates never reduce progress", () => {
   assert.equal(update, undefined);
 });
 
+test("planned MAL volume updates floor decimal Kavita volumes conservatively", () => {
+  const update = planBridgeMalUpdate({
+    observed: { kavitaCompletedVolume: 10.5, isSpecial: false },
+    current: { chaptersRead: 0, volumesRead: 9, status: "plan_to_read" },
+    policy: defaultTrackingPolicyForSeries("novel"),
+  });
+
+  assert.deepEqual(update, {
+    num_volumes_read: 10,
+    status: "reading",
+  });
+});
+
 test("specials are ignored by default", () => {
   const update = planBridgeMalUpdate({
     observed: { kavitaCompletedChapter: 6, kavitaCompletedVolume: 2, isSpecial: true },

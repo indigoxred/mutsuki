@@ -221,6 +221,108 @@ test("Kavita client keeps listing series when one volume progress request fails"
   }
 });
 
+test("Kavita client derives standalone EPUB volume progress from sentinel special chapters", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (input, init) => {
+      const url =
+        input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+      const headers = init?.headers as Record<string, string>;
+      assert.equal(headers["x-api-key"], "secret-key");
+
+      if (url === "https://read.example.test/api/Series/all-v2") {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 15003,
+              name: "Baka to Tesuto to Syokanju:Volume10.5",
+              libraryId: 7,
+            },
+            {
+              id: 15662,
+              name: "Baka to Tesuto to Syokanju:Volume2",
+              libraryId: 7,
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url === "https://read.example.test/api/Series/volumes?seriesId=15003") {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 50802,
+              minNumber: -100000,
+              maxNumber: -100000,
+              pages: 1,
+              pagesRead: 1,
+              chapters: [
+                {
+                  id: 67863,
+                  minNumber: -100000,
+                  maxNumber: -100000,
+                  number: "-100000",
+                  range: "Baka to Tesuto to Syokanju:Volume10.5",
+                  pages: 1,
+                  pagesRead: 1,
+                  isSpecial: true,
+                },
+              ],
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url === "https://read.example.test/api/Series/volumes?seriesId=15662") {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 52918,
+              minNumber: -100000,
+              maxNumber: -100000,
+              pages: 1,
+              pagesRead: 1,
+              chapters: [
+                {
+                  id: 70018,
+                  minNumber: -100000,
+                  maxNumber: -100000,
+                  number: "-100000",
+                  range: "Baka to Tesuto to Syokanju:Volume2",
+                  pages: 1,
+                  pagesRead: 1,
+                  totalReads: 1,
+                  isSpecial: true,
+                },
+              ],
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      throw new Error(`unexpected URL ${url}`);
+    };
+
+    const series = await createKavitaClient({
+      ...bridgeConfigFromEnv({}),
+      kavitaBaseUrl: "https://read.example.test",
+      kavitaApiKey: "secret-key",
+    }).listSeries();
+
+    assert.equal(series[0]?.completedChapter, undefined);
+    assert.equal(series[0]?.completedVolume, 10.5);
+    assert.equal(series[0]?.contentType, "novel");
+    assert.equal(series[1]?.completedChapter, undefined);
+    assert.equal(series[1]?.completedVolume, 2);
+    assert.equal(series[1]?.contentType, "novel");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("MAL readiness verifies the stored OAuth token without leaking it in failures", async () => {
   const originalFetch = globalThis.fetch;
   try {
