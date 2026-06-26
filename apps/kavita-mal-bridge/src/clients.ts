@@ -34,6 +34,11 @@ export function createKavitaClient(config: BridgeConfig): BridgeKavitaClient {
           baseUrl,
           config.kavitaApiKey,
           item.kavitaSeriesId,
+        ).catch(
+          (): Pick<BridgeObservedSeries, "completedChapter" | "completedVolume"> => ({
+            completedChapter: undefined,
+            completedVolume: undefined,
+          }),
         );
         return {
           ...item,

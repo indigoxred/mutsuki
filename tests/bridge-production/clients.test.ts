@@ -148,6 +148,78 @@ test("Kavita client derives read progress from current volume and chapter DTOs",
   }
 });
 
+test("Kavita client keeps listing series when one volume progress request fails", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async (input, init) => {
+      const url =
+        input instanceof Request ? input.url : input instanceof URL ? input.toString() : input;
+      const headers = init?.headers as Record<string, string>;
+      assert.equal(headers["x-api-key"], "secret-key");
+
+      if (url === "https://read.example.test/api/Series/all-v2") {
+        return new Response(
+          JSON.stringify([
+            { id: 1, name: "Transient Failure", libraryId: 7, format: "Manga" },
+            { id: 2, name: "Healthy Series", libraryId: 7, format: "Manga" },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      if (url === "https://read.example.test/api/Series/volumes?seriesId=1") {
+        return new Response("server error mentioning secret-key should not surface", {
+          status: 500,
+        });
+      }
+
+      if (url === "https://read.example.test/api/Series/volumes?seriesId=2") {
+        return new Response(
+          JSON.stringify([
+            {
+              id: 200,
+              minNumber: 1,
+              maxNumber: 1,
+              pages: 10,
+              pagesRead: 10,
+              chapters: [
+                {
+                  id: 2001,
+                  minNumber: 1,
+                  maxNumber: 1,
+                  pages: 10,
+                  pagesRead: 10,
+                  isSpecial: false,
+                },
+              ],
+            },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
+      throw new Error(`unexpected URL ${url}`);
+    };
+
+    const series = await createKavitaClient({
+      ...bridgeConfigFromEnv({}),
+      kavitaBaseUrl: "https://read.example.test",
+      kavitaApiKey: "secret-key",
+    }).listSeries();
+
+    assert.equal(series.length, 2);
+    assert.equal(series[0]?.title, "Transient Failure");
+    assert.equal(series[0]?.completedChapter, undefined);
+    assert.equal(series[0]?.completedVolume, undefined);
+    assert.equal(series[1]?.title, "Healthy Series");
+    assert.equal(series[1]?.completedChapter, 1);
+    assert.equal(series[1]?.completedVolume, 1);
+    assert.doesNotMatch(JSON.stringify(series), /secret-key/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("MAL readiness verifies the stored OAuth token without leaking it in failures", async () => {
   const originalFetch = globalThis.fetch;
   try {
