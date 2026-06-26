@@ -610,6 +610,66 @@ test("bridge server starts and completes MAL OAuth with persisted settings", asy
   }
 });
 
+test("bridge server reports MAL OAuth callback errors without token exchange", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.saveSetting("malClientId", "client-id");
+  await store.saveSetting("malRedirectUri", "http://127.0.0.1/callback");
+  let tokenExchangeCount = 0;
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+    oauthTransport: async () => {
+      tokenExchangeCount += 1;
+      throw new Error("should not exchange denied authorization");
+    },
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const start = await fetch(`http://127.0.0.1:${port}/api/mal/oauth/start`, {
+      redirect: "manual",
+    });
+    const location = start.headers.get("location");
+    assert.ok(location);
+    const state = new URL(location).searchParams.get("state");
+    assert.ok(state);
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/mal/oauth/callback?state=${state}&error=access_denied&error_description=Nope%20secret-mal-token`,
+    );
+    const body = await response.text();
+    const audit = await store.listAuditLogs();
+
+    assert.equal(response.status, 400);
+    assert.match(body, /MAL authorization failed/u);
+    assert.match(body, /access_denied/u);
+    assert.doesNotMatch(body, /secret-mal-token/u);
+    assert.equal(tokenExchangeCount, 0);
+    assert.equal((await store.getOAuthTokens())?.accessToken, undefined);
+    assert.equal(await store.getOAuthState(state), undefined);
+    assert.ok(audit.some((entry) => entry.type === "system" && entry.message.includes("failed")));
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 async function fetchJson(url: string): Promise<any> {
   const response = await fetch(url);
   assert.equal(response.status, 200);

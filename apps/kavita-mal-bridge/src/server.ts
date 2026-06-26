@@ -122,6 +122,17 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       }
       if (request.method === "GET" && url.pathname === "/api/mal/oauth/callback") {
         const state = url.searchParams.get("state") ?? "";
+        const oauthError = url.searchParams.get("error");
+        if (oauthError) {
+          if (state) await options.store.deleteOAuthState(state);
+          const message = `MAL authorization failed: ${sanitize(oauthError)}`;
+          await options.store.audit({
+            type: "system",
+            message,
+          });
+          await respondHtml(response, oauthFailureHtml(message), 400);
+          return;
+        }
         const code = url.searchParams.get("code") ?? "";
         if (!state || !code) throw new Error("MAL OAuth callback is missing state or code.");
         const storedState = await options.store.getOAuthState(state);
@@ -700,12 +711,16 @@ async function respondJson(response: ServerResponse, body: unknown, status = 200
   response.end(text);
 }
 
-async function respondHtml(response: ServerResponse, html: string): Promise<void> {
-  response.writeHead(200, {
+async function respondHtml(response: ServerResponse, html: string, status = 200): Promise<void> {
+  response.writeHead(status, {
     "Content-Type": "text/html; charset=utf-8",
     "Content-Length": Buffer.byteLength(html),
   });
   response.end(html);
+}
+
+function oauthFailureHtml(message: string): string {
+  return `<!doctype html><html><body><h1>MAL authorization failed</h1><p>${escapeHtml(message)}</p><p>Return to the Mutsuki bridge and start authorization again.</p></body></html>`;
 }
 
 function sanitize(message: string): string {
