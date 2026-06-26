@@ -127,5 +127,6 @@ The SQLite database is stored under `/data`, so normal image updates should not 
   stored key is a general API/Auth key rather than an image-only key.
 - If mappings are missing, leave dry-run enabled and inspect **Unresolved Matches** before approving
   anything manually.
-- If the outbox has failed rows, keep dry-run or write mode unchanged and inspect the sanitized error
-  messages before retrying.
+- If the outbox has failed rows, keep dry-run or write mode unchanged, inspect the sanitized error
+  messages, fix the underlying authorization/settings issue, then use the row's **Retry** action to
+  place it back in the pending queue.

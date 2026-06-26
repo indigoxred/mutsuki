@@ -133,6 +133,119 @@ test("bridge server exposes outbox status and recent items", async () => {
   }
 });
 
+test("bridge server requeues a failed outbox item for manual retry", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const item = await enqueueMalUpdate(store, {
+    kavitaSeriesId: 99,
+    malId: 12345,
+    update: { num_chapters_read: 8, num_volumes_read: 2 },
+    reason: "progress-sync",
+  });
+  await store.update({
+    ...item,
+    status: "failed",
+    attempts: 2,
+    lastError: "Bearer leaked-token retryable failure",
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/outbox/${encodeURIComponent(item.id)}/retry`,
+      { method: "POST" },
+    );
+    const body = await response.json();
+    const outbox = await fetchJson(`http://127.0.0.1:${port}/api/outbox`);
+    const status = await fetchJson(`http://127.0.0.1:${port}/api/status`);
+    const audit = await store.listAuditLogs();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.item.status, "pending");
+    assert.equal(body.item.attempts, 2);
+    assert.equal(body.item.lastError, undefined);
+    assert.equal(outbox.items[0].status, "pending");
+    assert.equal(outbox.items[0].attempts, 2);
+    assert.equal(status.outbox.pending, 1);
+    assert.equal(status.outbox.failed, 0);
+    assert.ok(
+      audit.some(
+        (entry) =>
+          entry.type === "outbox" &&
+          entry.kavitaSeriesId === 99 &&
+          entry.message.includes("retry queued"),
+      ),
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server refuses manual retry for an outbox item that is not failed", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const item = await enqueueMalUpdate(store, {
+    kavitaSeriesId: 99,
+    malId: 12345,
+    update: { num_chapters_read: 8 },
+    reason: "progress-sync",
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/outbox/${encodeURIComponent(item.id)}/retry`,
+      { method: "POST" },
+    );
+    const body = await response.json();
+
+    assert.equal(response.status, 409);
+    assert.match(body.error, /Only failed outbox items can be retried/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge server exposes mapped series titles for review and override", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));

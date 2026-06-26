@@ -389,6 +389,13 @@ export class SqliteBridgeStore implements OutboxStore {
     return row ? outboxFromRow(row) : undefined;
   }
 
+  async getOutboxItem(id: string): Promise<BridgeOutboxItem | undefined> {
+    const row = this.db.prepare("SELECT * FROM mal_outbox WHERE id = ?").get(id) as
+      | OutboxRow
+      | undefined;
+    return row ? outboxFromRow(row) : undefined;
+  }
+
   async insert(item: BridgeOutboxItem): Promise<void> {
     this.db
       .prepare(

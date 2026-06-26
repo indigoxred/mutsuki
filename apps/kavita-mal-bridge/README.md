@@ -21,6 +21,8 @@ read-action feasibility tests.
 - Manual ignore and restore controls for unresolved series which should not sync to MAL.
 - Manual override controls for existing mappings, offsets, tracking policies, and persisted Kavita
   titles.
+- Manual retry controls for failed MAL outbox rows after settings, authorization, or transient MAL
+  issues are corrected.
 - Lightweight Kavita readiness checks and MAL OAuth authorization checks.
 - Manga defaults to chapter-and-volume tracking.
 - Light novels default to volume-only tracking.
@@ -82,6 +84,7 @@ then run **Authorize MAL** again.
 - `GET /api/audit-log`
 - `POST /api/sync/run`
 - `POST /api/settings`
+- `POST /api/outbox/:outboxId/retry`
 - `GET /api/mal/oauth/start`
 - `GET /api/mal/oauth/callback`
 - `POST /api/mal/oauth/disconnect`

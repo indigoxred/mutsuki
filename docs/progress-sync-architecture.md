@@ -118,6 +118,8 @@ includes:
 - monotonic high-water progress updates;
 - offsets and tracking policies;
 - retry/outbox tables for MAL writes;
+- manual requeue controls for failed outbox items after the operator fixes authorization, settings,
+  or transient MAL/API failures;
 - scheduled polling with overlap prevention;
 - audit logging;
 - progress extraction from current Kavita `VolumeDto`/`ChapterDto` fields via

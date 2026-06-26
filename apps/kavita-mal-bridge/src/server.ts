@@ -75,6 +75,39 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         await respondJson(response, { items: await options.store.listOutbox(100) });
         return;
       }
+      const retryOutbox = /^\/api\/outbox\/([^/]+)\/retry$/u.exec(url.pathname);
+      if (request.method === "POST" && retryOutbox?.[1]) {
+        const id = decodeURIComponent(retryOutbox[1]);
+        const item = await options.store.getOutboxItem(id);
+        if (!item) {
+          await respondJson(response, { error: "Outbox item not found." }, 404);
+          return;
+        }
+        if (item.status !== "failed") {
+          await respondJson(response, { error: "Only failed outbox items can be retried." }, 409);
+          return;
+        }
+        const updated = {
+          ...item,
+          status: "pending" as const,
+          lastError: undefined,
+          updatedAt: new Date().toISOString(),
+        };
+        await options.store.update(updated);
+        await options.store.audit({
+          type: "outbox",
+          kavitaSeriesId: updated.kavitaSeriesId,
+          message: `Manual outbox retry queued for MAL ${updated.malId}.`,
+          dataJson: JSON.stringify({
+            outboxId: updated.id,
+            malId: updated.malId,
+            attempts: updated.attempts,
+            reason: updated.reason,
+          }),
+        });
+        await respondJson(response, { ok: true, item: updated });
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/api/mappings") {
         await respondJson(response, { items: await options.store.listSeriesMappings() });
         return;
@@ -523,7 +556,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   <h2>Recent MAL Outbox</h2>
   <p>${outboxCounts.pending} pending, ${outboxCounts.succeeded} succeeded, ${outboxCounts.failed} failed.</p>
   <table>
-    <thead><tr><th>Created</th><th>Status</th><th>Kavita Series</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th></tr></thead>
+    <thead><tr><th>Created</th><th>Status</th><th>Kavita Series</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
     <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
   </table>
   <h2>Unresolved Matches</h2>
@@ -637,6 +670,17 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
         status.textContent = response.ok ? "Mapping override saved." : "Mapping override failed.";
       });
     }
+    for (const form of document.querySelectorAll(".outbox-retry-form")) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch(event.currentTarget.dataset.endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        status.textContent = response.ok ? "Outbox retry queued." : await responseErrorMessage(response, "Outbox retry failed.");
+      });
+    }
     async function responseErrorMessage(response, fallback) {
       try {
         const body = await response.json();
@@ -675,7 +719,11 @@ function renderMappingRow(mapping: SeriesMappingRecord): string {
 function renderOutboxRow(
   item: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>[number],
 ): string {
-  return `<tr><td>${escapeHtml(item.createdAt)}</td><td>${escapeHtml(item.status)}</td><td>${item.kavitaSeriesId}</td><td>${item.malId}</td><td>${escapeHtml(JSON.stringify(item.update))}</td><td>${item.attempts}</td><td>${escapeHtml(item.lastError ?? "")}</td></tr>`;
+  const action =
+    item.status === "failed"
+      ? `<form class="outbox-retry-form" data-endpoint="/api/outbox/${encodeURIComponent(item.id)}/retry"><button type="submit">Retry</button></form>`
+      : "";
+  return `<tr><td>${escapeHtml(item.createdAt)}</td><td>${escapeHtml(item.status)}</td><td>${item.kavitaSeriesId}</td><td>${item.malId}</td><td>${escapeHtml(JSON.stringify(item.update))}</td><td>${item.attempts}</td><td>${escapeHtml(item.lastError ?? "")}</td><td>${action}</td></tr>`;
 }
 
 function trackingModeOption(
