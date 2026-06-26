@@ -21,6 +21,14 @@ test("bridge server exposes status and unresolved review API", async () => {
   const server = createKavitaMalBridgeServer({
     store,
     dryRun: true,
+    schedulerStatus: () => ({
+      intervalMs: 600_000,
+      lastResult: {
+        skipped: false,
+        startedAt: "2026-06-26T00:00:00.000Z",
+        finishedAt: "2026-06-26T00:00:01.000Z",
+      },
+    }),
     runSync: async () => ({
       seriesSeen: 0,
       autoMatched: 0,
@@ -42,8 +50,49 @@ test("bridge server exposes status and unresolved review API", async () => {
     const reviews = await fetchJson(`http://127.0.0.1:${port}/api/unresolved-matches`);
 
     assert.equal(status.dryRun, true);
+    assert.equal(status.scheduler.intervalSeconds, 600);
+    assert.equal(status.scheduler.lastResult.skipped, false);
     assert.equal(reviews.items.length, 1);
     assert.equal(reviews.items[0].title, "Needs Review");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server notifies scheduler when poll interval settings change", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const rescheduledIntervals: number[] = [];
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+    onSettingsSaved: async () => {
+      rescheduledIntervals.push(Number(await store.getSetting("pollIntervalSeconds")));
+    },
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    await postJson(`http://127.0.0.1:${port}/api/settings`, {
+      pollIntervalSeconds: 900,
+    });
+
+    assert.deepEqual(rescheduledIntervals, [900]);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();

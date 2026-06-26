@@ -7,27 +7,41 @@ export interface BridgeSchedulerResult {
 
 export class BridgeScheduler {
   lastResult: BridgeSchedulerResult | undefined;
+  currentIntervalMs: number;
   private timer: NodeJS.Timeout | undefined;
   private running = false;
+  private readonly runSync: () => Promise<unknown>;
 
-  constructor(
-    private readonly options: {
-      intervalMs: number;
-      runSync: () => Promise<unknown>;
-    },
-  ) {}
+  constructor(options: { intervalMs: number; runSync: () => Promise<unknown> }) {
+    this.currentIntervalMs = options.intervalMs;
+    this.runSync = options.runSync;
+  }
 
   start(): void {
     if (this.timer) return;
     this.timer = setInterval(() => {
       void this.runNow();
-    }, this.options.intervalMs);
+    }, this.currentIntervalMs);
   }
 
   stop(): void {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = undefined;
+  }
+
+  updateIntervalMs(intervalMs: number): void {
+    if (
+      !Number.isSafeInteger(intervalMs) ||
+      intervalMs <= 0 ||
+      intervalMs === this.currentIntervalMs
+    ) {
+      return;
+    }
+    const wasRunning = this.timer !== undefined;
+    this.stop();
+    this.currentIntervalMs = intervalMs;
+    if (wasRunning) this.start();
   }
 
   async runNow(): Promise<BridgeSchedulerResult> {
@@ -42,7 +56,7 @@ export class BridgeScheduler {
     }
     this.running = true;
     try {
-      await this.options.runSync();
+      await this.runSync();
       const result = {
         skipped: false,
         startedAt,

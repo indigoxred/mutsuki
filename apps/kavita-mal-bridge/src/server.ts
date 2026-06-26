@@ -22,7 +22,7 @@ import {
   effectiveBridgeConfig,
   refreshStoredMalTokenIfNeeded,
 } from "./runtime.js";
-import { BridgeScheduler } from "./scheduler.js";
+import { BridgeScheduler, type BridgeSchedulerResult } from "./scheduler.js";
 import { runBridgeSyncOnce, type BridgeSyncResult } from "./sync.js";
 import { SqliteBridgeStore, type SeriesMappingRecord } from "./storage.js";
 
@@ -32,6 +32,8 @@ export interface KavitaMalBridgeServerOptions {
   runSync: () => Promise<BridgeSyncResult>;
   oauthTransport?: OAuthTransport;
   checkReadiness?: () => Promise<BridgeReadinessResult>;
+  schedulerStatus?: () => { intervalMs: number; lastResult?: BridgeSchedulerResult };
+  onSettingsSaved?: () => Promise<void> | void;
 }
 
 export interface BridgeReadinessResult {
@@ -58,6 +60,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           pollIntervalSeconds: settingNumber(settings.pollIntervalSeconds),
           mappings: (await options.store.listSeriesMappings()).length,
           unresolved: (await options.store.listReviews()).length,
+          scheduler: schedulerStatus(options),
           audit: (await options.store.listAuditLogs(25)).slice(0, 10),
         });
         return;
@@ -129,6 +132,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           type: "system",
           message: "Bridge settings updated.",
         });
+        await options.onSettingsSaved?.();
         await respondJson(response, { ok: true });
         return;
       }
@@ -175,6 +179,18 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       );
     }
   });
+}
+
+function schedulerStatus(
+  options: KavitaMalBridgeServerOptions,
+): { intervalSeconds: number; lastResult?: BridgeSchedulerResult } | undefined {
+  const status = options.schedulerStatus?.();
+  return status
+    ? {
+        intervalSeconds: Math.floor(status.intervalMs / 1000),
+        lastResult: status.lastResult,
+      }
+    : undefined;
 }
 
 async function readiness(options: KavitaMalBridgeServerOptions): Promise<BridgeReadinessResult> {
@@ -304,6 +320,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     options.store.getOAuthTokens(),
   ]);
   const effectiveDryRun = settingBoolean(settings.dryRun, options.dryRun);
+  const schedule = schedulerStatus(options);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -327,7 +344,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
 </head>
 <body>
   <h1>Mutsuki Kavita MAL Bridge</h1>
-  <p class="muted">Mode: <strong>${effectiveDryRun ? "dry-run" : "live MAL writes"}</strong> - MAL: <strong>${tokens ? "authorized" : "not authorized"}</strong></p>
+  <p class="muted">Mode: <strong>${effectiveDryRun ? "dry-run" : "live MAL writes"}</strong> - MAL: <strong>${tokens ? "authorized" : "not authorized"}</strong>${schedule ? ` - Poll: <strong>${schedule.intervalSeconds}s</strong>` : ""}</p>
   <h2>Setup</h2>
   <form class="panel" id="settings-form" data-endpoint="/api/settings">
     <div class="row">
@@ -558,8 +575,9 @@ async function startFromEnv(): Promise<void> {
     const mal = createMalClient(config);
     return runBridgeSyncOnce({ store, kavita, mal, dryRun: config.dryRun });
   };
+  const initialConfig = await effectiveBridgeConfig(baseConfig, store);
   const scheduler = new BridgeScheduler({
-    intervalMs: baseConfig.pollIntervalSeconds * 1000,
+    intervalMs: initialConfig.pollIntervalSeconds * 1000,
     runSync,
   });
   scheduler.start();
@@ -567,6 +585,14 @@ async function startFromEnv(): Promise<void> {
     store,
     dryRun: baseConfig.dryRun,
     runSync,
+    schedulerStatus: () => ({
+      intervalMs: scheduler.currentIntervalMs,
+      lastResult: scheduler.lastResult,
+    }),
+    onSettingsSaved: async () => {
+      const config = await effectiveBridgeConfig(baseConfig, store);
+      scheduler.updateIntervalMs(config.pollIntervalSeconds * 1000);
+    },
   });
   server.listen(baseConfig.port, () => {
     console.log(`Mutsuki Kavita MAL Bridge listening on ${baseConfig.port}.`);

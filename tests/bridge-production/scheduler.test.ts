@@ -28,3 +28,16 @@ test("scheduler prevents overlapping sync runs", async () => {
   assert.equal(maxActive, 1);
   assert.equal(scheduler.lastResult?.skipped, true);
 });
+
+test("scheduler can be rescheduled without losing its last result", async () => {
+  const scheduler = new BridgeScheduler({
+    intervalMs: 1000,
+    runSync: async () => {},
+  });
+
+  await scheduler.runNow();
+  scheduler.updateIntervalMs(2500);
+
+  assert.equal(scheduler.currentIntervalMs, 2500);
+  assert.equal(scheduler.lastResult?.skipped, false);
+});

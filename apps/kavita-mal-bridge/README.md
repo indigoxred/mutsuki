@@ -22,7 +22,7 @@ read-action feasibility tests.
 - Light novels default to volume-only tracking.
 - Monotonic high-water MAL update planning with offsets.
 - Dry-run mode enabled by default.
-- Scheduled polling with overlap prevention.
+- Scheduled polling with overlap prevention and live poll-interval rescheduling from the setup UI.
 - Local Web/API status, setup, audit, and unresolved-match views.
 
 ## Docker
