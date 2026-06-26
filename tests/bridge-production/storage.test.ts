@@ -35,6 +35,11 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
       reason: "ambiguous-or-low-confidence",
       candidatesJson: "[]",
     });
+    await store.ignoreSeries({
+      kavitaSeriesId: 46,
+      title: "Do Not Track",
+      reason: "manual-ignore",
+    });
     await store.audit({
       type: "match",
       kavitaSeriesId: 44,
@@ -81,6 +86,8 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     assert.equal(outbox[0]?.status, "succeeded");
     assert.equal(outboxCounts.succeeded, 1);
     assert.equal((await reopened.listReviews()).length, 1);
+    assert.equal(await reopened.isSeriesIgnored(46), true);
+    assert.equal((await reopened.listIgnoredSeries())[0]?.title, "Do Not Track");
     assert.equal((await reopened.listAuditLogs()).length, 1);
     assert.equal(await reopened.getSetting("kavitaBaseUrl"), "https://read.example.test");
     assert.equal((await reopened.getOAuthState("state-1"))?.codeVerifier, "verifier-1");

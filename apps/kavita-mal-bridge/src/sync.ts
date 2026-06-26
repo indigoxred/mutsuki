@@ -71,6 +71,8 @@ export async function runBridgeSyncOnce(input: {
   result.seriesSeen = series.length;
 
   for (const item of series) {
+    if (await input.store.isSeriesIgnored(item.kavitaSeriesId)) continue;
+
     let mapping = await input.store.getSeriesMapping(item.kavitaSeriesId);
     if (!mapping) {
       mapping = await createMappingOrReview(input.store, input.mal, item, input.externalIdResolver);

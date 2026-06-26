@@ -115,6 +115,52 @@ test("sync places ambiguous title matches into review without writing MAL", asyn
   }
 });
 
+test("sync skips manually ignored unresolved series", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-sync-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.ignoreSeries({
+    kavitaSeriesId: 11,
+    title: "Ignored Story",
+    reason: "manual-ignore",
+  });
+  const kavita: BridgeKavitaClient = {
+    listSeries: async () => [
+      {
+        kavitaSeriesId: 11,
+        title: "Ignored Story",
+        contentType: "manga",
+        completedChapter: 4,
+        completedVolume: 1,
+        isSpecial: false,
+      },
+    ],
+  };
+  const mal: BridgeMalClient = {
+    searchManga: async () => {
+      throw new Error("ignored series should not be searched");
+    },
+    getCurrentProgress: async () => {
+      throw new Error("ignored series should not fetch MAL progress");
+    },
+    updateProgress: async () => {
+      throw new Error("ignored series should not update MAL");
+    },
+  };
+
+  try {
+    const result = await runBridgeSyncOnce({ store, kavita, mal, dryRun: true });
+
+    assert.equal(result.seriesSeen, 1);
+    assert.equal(result.reviewQueued, 0);
+    assert.equal((await store.listReviews()).length, 0);
+    assert.equal((await store.listOutbox()).length, 0);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("sync auto-links deterministic external metadata before fuzzy title search", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-sync-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));

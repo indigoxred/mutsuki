@@ -286,6 +286,49 @@ test("bridge server can save settings and approve an unresolved MAL mapping", as
   }
 });
 
+test("bridge server can ignore an unresolved match without a MAL id", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.enqueueReview({
+    kavitaSeriesId: 101,
+    title: "No MAL Entry",
+    reason: "ambiguous-or-low-confidence",
+    candidatesJson: "[]",
+  });
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    await postJson(`http://127.0.0.1:${port}/api/unresolved-matches/101/ignore`, {});
+
+    const ignored = await fetchJson(`http://127.0.0.1:${port}/api/ignored-series`);
+    assert.equal((await store.listReviews()).length, 0);
+    assert.equal(await store.isSeriesIgnored(101), true);
+    assert.equal(ignored.items[0].title, "No MAL Entry");
+    assert.equal(ignored.items[0].reason, "manual-ignore");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge server can override an existing MAL mapping and tracking policy", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));

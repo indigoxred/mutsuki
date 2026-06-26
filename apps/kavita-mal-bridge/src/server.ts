@@ -76,6 +76,10 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         await respondJson(response, { items: await options.store.listReviews() });
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/ignored-series") {
+        await respondJson(response, { items: await options.store.listIgnoredSeries() });
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/api/audit-log") {
         await respondJson(response, { items: await options.store.listAuditLogs(100) });
         return;
@@ -175,6 +179,26 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           message: `Manual MAL mapping approved for ${mapping.malId}.`,
         });
         await respondJson(response, { ok: true, mapping });
+        return;
+      }
+      const ignoreMatch = /^\/api\/unresolved-matches\/(\d+)\/ignore$/u.exec(url.pathname);
+      if (request.method === "POST" && ignoreMatch?.[1]) {
+        const kavitaSeriesId = Number(ignoreMatch[1]);
+        const review = (await options.store.listReviews()).find(
+          (item) => item.kavitaSeriesId === kavitaSeriesId,
+        );
+        await options.store.ignoreSeries({
+          kavitaSeriesId,
+          title: review?.title ?? `Kavita series ${kavitaSeriesId}`,
+          reason: "manual-ignore",
+        });
+        await options.store.deleteReview(kavitaSeriesId);
+        await options.store.audit({
+          type: "review",
+          kavitaSeriesId,
+          message: "Manual review ignored; series will not be synced to MAL.",
+        });
+        await respondJson(response, { ok: true });
         return;
       }
       await respondJson(response, { error: "Not found." }, 404);
@@ -330,6 +354,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       options.store.outboxCounts(),
     ],
   );
+  const ignored = await options.store.listIgnoredSeries();
   const effectiveDryRun = settingBoolean(settings.dryRun, options.dryRun);
   const schedule = schedulerStatus(options);
   return `<!doctype html>
@@ -407,6 +432,12 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Approve</th></tr></thead>
     <tbody>${reviews.map((review) => renderReviewRow(review)).join("")}</tbody>
   </table>
+  <h2>Ignored Series</h2>
+  <p>${ignored.length} Kavita series are manually excluded from MAL sync.</p>
+  <table>
+    <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Created</th></tr></thead>
+    <tbody>${ignored.map(renderIgnoredRow).join("")}</tbody>
+  </table>
   <h2>Recent Audit</h2>
   <table>
     <thead><tr><th>Time</th><th>Type</th><th>Series</th><th>Message</th></tr></thead>
@@ -455,6 +486,17 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
           body: JSON.stringify(formJson(event.currentTarget)),
         });
         status.textContent = response.ok ? "Mapping approved." : "Approval failed.";
+      });
+    }
+    for (const form of document.querySelectorAll(".ignore-form")) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch(event.currentTarget.dataset.endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        status.textContent = response.ok ? "Series ignored." : "Ignore failed.";
       });
     }
     for (const form of document.querySelectorAll(".mapping-form")) {
@@ -526,7 +568,16 @@ function renderReviewRow(
       <button type="submit">Approve</button>
       ${candidate ? `<p class="muted">Top candidate: ${escapeHtml(candidate.title ?? String(candidate.malId))}</p>` : ""}
     </form>
+    <form class="ignore-form" data-endpoint="/api/unresolved-matches/${review.kavitaSeriesId}/ignore">
+      <button type="submit">Ignore</button>
+    </form>
   </td></tr>`;
+}
+
+function renderIgnoredRow(
+  ignored: Awaited<ReturnType<SqliteBridgeStore["listIgnoredSeries"]>>[number],
+): string {
+  return `<tr><td>${ignored.kavitaSeriesId}</td><td>${escapeHtml(ignored.title)}</td><td>${escapeHtml(ignored.reason)}</td><td>${escapeHtml(ignored.createdAt)}</td></tr>`;
 }
 
 function firstReviewCandidate(

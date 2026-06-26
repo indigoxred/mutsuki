@@ -27,6 +27,13 @@ export interface ReviewRecord {
   createdAt?: string;
 }
 
+export interface IgnoredSeriesRecord {
+  kavitaSeriesId: number;
+  title: string;
+  reason: string;
+  createdAt?: string;
+}
+
 export interface AuditRecord {
   type: "match" | "progress" | "outbox" | "review" | "system";
   kavitaSeriesId?: number;
@@ -78,6 +85,12 @@ export class SqliteBridgeStore implements OutboxStore {
         title TEXT NOT NULL,
         reason TEXT NOT NULL,
         candidates_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS ignored_series (
+        kavita_series_id INTEGER PRIMARY KEY,
+        title TEXT NOT NULL,
+        reason TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS mal_outbox (
@@ -212,6 +225,40 @@ export class SqliteBridgeStore implements OutboxStore {
       title: row.title,
       reason: row.reason,
       candidatesJson: row.candidates_json,
+      createdAt: row.created_at,
+    }));
+  }
+
+  async ignoreSeries(record: IgnoredSeriesRecord): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO ignored_series (kavita_series_id, title, reason, created_at)
+          VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(kavita_series_id) DO UPDATE SET
+            title = excluded.title,
+            reason = excluded.reason
+        `,
+      )
+      .run(record.kavitaSeriesId, record.title, record.reason);
+  }
+
+  async isSeriesIgnored(kavitaSeriesId: number): Promise<boolean> {
+    const row = this.db
+      .prepare("SELECT 1 AS ignored FROM ignored_series WHERE kavita_series_id = ?")
+      .get(kavitaSeriesId) as { ignored: number } | undefined;
+    return Boolean(row);
+  }
+
+  async listIgnoredSeries(): Promise<Required<IgnoredSeriesRecord>[]> {
+    return (
+      this.db
+        .prepare("SELECT * FROM ignored_series ORDER BY created_at, kavita_series_id")
+        .all() as unknown as IgnoredSeriesRow[]
+    ).map((row) => ({
+      kavitaSeriesId: row.kavita_series_id,
+      title: row.title,
+      reason: row.reason,
       createdAt: row.created_at,
     }));
   }
@@ -448,6 +495,13 @@ interface ReviewRow {
   title: string;
   reason: string;
   candidates_json: string;
+  created_at: string;
+}
+
+interface IgnoredSeriesRow {
+  kavita_series_id: number;
+  title: string;
+  reason: string;
   created_at: string;
 }
 
