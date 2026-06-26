@@ -21,6 +21,15 @@ export async function effectiveBridgeConfig(
   };
 }
 
+export function assertBridgeSyncReady(config: BridgeConfig): void {
+  if (!config.kavitaBaseUrl || !config.kavitaApiKey) {
+    throw new Error("Kavita URL or API key is not configured.");
+  }
+  if (!config.malAccessToken) {
+    throw new Error("MAL OAuth token is not configured. Authorize MAL before running sync.");
+  }
+}
+
 export async function refreshStoredMalTokenIfNeeded(input: {
   baseConfig: BridgeConfig;
   store: SqliteBridgeStore;

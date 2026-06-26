@@ -17,7 +17,11 @@ import {
   type OAuthTransport,
 } from "./oauth.js";
 import type { BridgeTrackingMode } from "./policy.js";
-import { effectiveBridgeConfig, refreshStoredMalTokenIfNeeded } from "./runtime.js";
+import {
+  assertBridgeSyncReady,
+  effectiveBridgeConfig,
+  refreshStoredMalTokenIfNeeded,
+} from "./runtime.js";
 import { BridgeScheduler } from "./scheduler.js";
 import { runBridgeSyncOnce, type BridgeSyncResult } from "./sync.js";
 import { SqliteBridgeStore, type SeriesMappingRecord } from "./storage.js";
@@ -549,6 +553,7 @@ async function startFromEnv(): Promise<void> {
   const runSync = async (): Promise<BridgeSyncResult> => {
     await refreshStoredMalTokenIfNeeded({ baseConfig, store });
     const config = await effectiveBridgeConfig(baseConfig, store);
+    assertBridgeSyncReady(config);
     const kavita = createKavitaClient(config);
     const mal = createMalClient(config);
     return runBridgeSyncOnce({ store, kavita, mal, dryRun: config.dryRun });

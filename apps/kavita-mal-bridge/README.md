@@ -62,6 +62,8 @@ http://192.168.50.138:6768/api/mal/oauth/callback
 After saving the MAL client settings, use **Authorize MAL** on the bridge page. Keep dry-run enabled
 until the UI shows the expected mappings and queued updates. Use **Check readiness** to verify the
 configured Kavita endpoint can be queried and the stored MAL token is accepted before running a sync.
+Manual and scheduled sync runs require both Kavita configuration and a stored MAL OAuth token; the
+bridge will not poll the full library for mappings until MAL is authorized.
 
 ## API
 

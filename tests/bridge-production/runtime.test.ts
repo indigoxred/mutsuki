@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { bridgeConfigFromEnv } from "../../apps/kavita-mal-bridge/src/config.js";
 import {
+  assertBridgeSyncReady,
   effectiveBridgeConfig,
   refreshStoredMalTokenIfNeeded,
 } from "../../apps/kavita-mal-bridge/src/runtime.js";
@@ -48,6 +49,34 @@ test("effective bridge config uses persisted setup values and stored MAL OAuth t
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("sync readiness requires configured Kavita and authorized MAL", () => {
+  assert.throws(
+    () => assertBridgeSyncReady(bridgeConfigFromEnv({})),
+    /Kavita URL or API key is not configured/u,
+  );
+
+  assert.throws(
+    () =>
+      assertBridgeSyncReady(
+        bridgeConfigFromEnv({
+          KAVITA_BASE_URL: "https://read.example.test",
+          KAVITA_API_KEY: "kavita-key",
+        }),
+      ),
+    /MAL OAuth token is not configured/u,
+  );
+
+  assert.doesNotThrow(() =>
+    assertBridgeSyncReady(
+      bridgeConfigFromEnv({
+        KAVITA_BASE_URL: "https://read.example.test",
+        KAVITA_API_KEY: "kavita-key",
+        MAL_ACCESS_TOKEN: "mal-access",
+      }),
+    ),
+  );
 });
 
 test("expired stored MAL OAuth token refreshes before sync uses it", async () => {
