@@ -114,8 +114,8 @@ docker compose -f docker-compose.example.yml up
 Open `http://<docker-host-ip>:6768`. Keep `MUTSUKI_BRIDGE_DRY_RUN=true` until the UI shows expected
 Kavita-to-MAL mappings and desired progress updates. The bridge can start with only a persistent
 database path configured; use the local setup page to save the Kavita URL/API key, MAL OAuth client
-details, poll interval, and dry-run mode. MAL access and refresh tokens are stored in SQLite after
-OAuth authorization and refreshed before scheduled sync runs.
+details, poll interval, max MAL searches per run, and dry-run mode. MAL access and refresh tokens
+are stored in SQLite after OAuth authorization and refreshed before scheduled sync runs.
 
 Use **Preview Kavita progress** on the setup page, or call
 `GET /api/kavita/observed-progress?limit=25`, to verify the bridge can read Kavita's observed

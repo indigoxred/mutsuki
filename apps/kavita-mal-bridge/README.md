@@ -30,6 +30,8 @@ read-action feasibility tests.
 - Dry-run mode enabled by default; dry-run previews leave MAL outbox rows pending so disabling
   dry-run later can still push the same updates.
 - Scheduled polling with overlap prevention and live poll-interval rescheduling from the setup UI.
+- Configurable MAL title-search cap per sync run, with existing review-queue entries skipped until
+  resolved.
 - Local Web/API status, setup, outbox, audit, and unresolved-match views.
 
 ## Docker
@@ -57,6 +59,7 @@ the Web UI:
 - Kavita URL and Kavita Auth/API key
 - MAL OAuth client ID, optional client secret, and redirect URI
 - poll interval
+- max MAL searches per run
 - dry-run mode
 
 For MAL OAuth, create a MAL API client and use a redirect URI that points back to the bridge, for

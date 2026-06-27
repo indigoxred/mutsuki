@@ -9,6 +9,7 @@ export interface BridgeConfig {
   malClientSecret: string;
   malRedirectUri: string;
   pollIntervalSeconds: number;
+  maxMalSearchesPerRun: number;
 }
 
 export function bridgeConfigFromEnv(env: NodeJS.ProcessEnv): BridgeConfig {
@@ -23,6 +24,7 @@ export function bridgeConfigFromEnv(env: NodeJS.ProcessEnv): BridgeConfig {
     malClientSecret: env.MAL_CLIENT_SECRET ?? "",
     malRedirectUri: env.MAL_REDIRECT_URI ?? "",
     pollIntervalSeconds: parsePollInterval(env.MUTSUKI_BRIDGE_POLL_INTERVAL_SECONDS),
+    maxMalSearchesPerRun: parseMaxMalSearches(env.MUTSUKI_BRIDGE_MAX_MAL_SEARCHES_PER_RUN),
   };
 }
 
@@ -36,4 +38,10 @@ function parsePollInterval(value: string | undefined): number {
   const parsed = Number(value ?? "1800");
   if (!Number.isSafeInteger(parsed) || parsed < 60) return 1800;
   return parsed;
+}
+
+function parseMaxMalSearches(value: string | undefined): number {
+  const parsed = Number(value ?? "50");
+  if (!Number.isSafeInteger(parsed) || parsed < 1) return 50;
+  return Math.min(parsed, 500);
 }

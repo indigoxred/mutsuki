@@ -15,6 +15,7 @@ services:
       MUTSUKI_BRIDGE_DRY_RUN: "true"
       # Optional: these can also be configured from the bridge Web UI.
       MUTSUKI_BRIDGE_POLL_INTERVAL_SECONDS: "1800"
+      MUTSUKI_BRIDGE_MAX_MAL_SEARCHES_PER_RUN: "50"
       KAVITA_BASE_URL: ""
       KAVITA_API_KEY: ""
       MAL_CLIENT_ID: ""

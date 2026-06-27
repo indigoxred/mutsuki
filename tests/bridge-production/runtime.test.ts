@@ -22,6 +22,7 @@ test("effective bridge config uses persisted setup values and stored MAL OAuth t
     await store.saveSetting("kavitaApiKey", "stored-kavita-key");
     await store.saveSetting("dryRun", "false");
     await store.saveSetting("pollIntervalSeconds", "900");
+    await store.saveSetting("maxMalSearchesPerRun", "35");
     await store.saveOAuthTokens({
       accessToken: "stored-mal-access",
       refreshToken: "stored-mal-refresh",
@@ -45,6 +46,7 @@ test("effective bridge config uses persisted setup values and stored MAL OAuth t
     assert.equal(config.malAccessToken, "stored-mal-access");
     assert.equal(config.dryRun, false);
     assert.equal(config.pollIntervalSeconds, 900);
+    assert.equal(config.maxMalSearchesPerRun, 35);
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

@@ -59,6 +59,7 @@ PORT=6768
 MUTSUKI_BRIDGE_DB=/data/mutsuki-bridge.sqlite
 MUTSUKI_BRIDGE_DRY_RUN=true
 MUTSUKI_BRIDGE_POLL_INTERVAL_SECONDS=1800
+MUTSUKI_BRIDGE_MAX_MAL_SEARCHES_PER_RUN=50
 ```
 
 The container can start without Kavita or MAL secrets. Use the Web UI to save credentials after the
@@ -82,6 +83,7 @@ container is reachable.
    - optional MAL OAuth client secret
    - MAL redirect URI
    - poll interval
+   - max MAL searches per run
    - dry-run mode
 
 3. Use this redirect URI in both MAL's developer app settings and the bridge UI:
@@ -111,6 +113,9 @@ container is reachable.
 - Do not use the existing Paperback `Mutsuki MyAnimeList` tracker for the same MAL titles while the
   bridge is writing to MAL. Pick one writer so progress updates do not race.
 - Low-confidence or conflicting matches stay in the review queue and are not pushed to MAL.
+- New MAL title-search requests are capped per sync run. Existing review-queue entries are skipped
+  until you approve, ignore, or override them, so scheduled syncs can advance through large Kavita
+  libraries without repeatedly querying MAL for the same unresolved titles.
 - If a Kavita series should never sync to MAL, use the review queue's ignore action instead of
   approving a guessed MAL ID. Ignored series can be restored later from the bridge UI.
 - MAL progress is monotonic by default. The bridge does not automatically reduce MAL chapter or

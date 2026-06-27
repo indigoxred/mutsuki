@@ -18,6 +18,8 @@ export async function effectiveBridgeConfig(
     malClientSecret: settings.malClientSecret ?? base.malClientSecret,
     malRedirectUri: settings.malRedirectUri ?? base.malRedirectUri,
     pollIntervalSeconds: settingNumber(settings.pollIntervalSeconds) ?? base.pollIntervalSeconds,
+    maxMalSearchesPerRun:
+      settingPositiveInteger(settings.maxMalSearchesPerRun) ?? base.maxMalSearchesPerRun,
   };
 }
 
@@ -108,4 +110,10 @@ function settingNumber(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 60 ? parsed : undefined;
+}
+
+function settingPositiveInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 ? Math.min(parsed, 500) : undefined;
 }

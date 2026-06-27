@@ -62,6 +62,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           malOAuthConfigured: Boolean(settings.malClientId && settings.malRedirectUri),
           malAuthorized: Boolean(tokens),
           pollIntervalSeconds: settingNumber(settings.pollIntervalSeconds),
+          maxMalSearchesPerRun: positiveIntegerSetting(settings.maxMalSearchesPerRun),
           mappings: (await options.store.listSeriesMappings()).length,
           unresolved: (await options.store.listReviews()).length,
           ignored: (await options.store.listIgnoredSeries()).length,
@@ -384,6 +385,13 @@ async function saveSettings(
   if (pollInterval !== undefined) {
     await store.saveSetting("pollIntervalSeconds", String(Math.max(60, Math.floor(pollInterval))));
   }
+  const maxMalSearches = numberBodyField(body, "maxMalSearchesPerRun");
+  if (maxMalSearches !== undefined) {
+    await store.saveSetting(
+      "maxMalSearchesPerRun",
+      String(Math.max(1, Math.min(500, Math.floor(maxMalSearches)))),
+    );
+  }
 }
 
 function mappingFromApproval(
@@ -473,6 +481,12 @@ function settingNumber(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function positiveIntegerSetting(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 ? Math.min(parsed, 500) : undefined;
+}
+
 async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string> {
   const [mappings, reviews, audit, settings, tokens, outboxItems, outboxCounts] = await Promise.all(
     [
@@ -523,6 +537,9 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       </label>
       <label>Poll interval seconds
         <input name="pollIntervalSeconds" type="number" min="60" step="60" value="${escapeHtml(settings.pollIntervalSeconds ?? "")}" />
+      </label>
+      <label>Max MAL searches per run
+        <input name="maxMalSearchesPerRun" type="number" min="1" max="500" step="1" value="${escapeHtml(settings.maxMalSearchesPerRun ?? "")}" />
       </label>
       <label>Dry run
         <select name="dryRun">
@@ -585,6 +602,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       if (!data.kavitaApiKey) delete data.kavitaApiKey;
       if (!data.malClientSecret) delete data.malClientSecret;
       if (data.pollIntervalSeconds) data.pollIntervalSeconds = Number(data.pollIntervalSeconds);
+      if (data.maxMalSearchesPerRun) data.maxMalSearchesPerRun = Number(data.maxMalSearchesPerRun);
       if (data.dryRun) data.dryRun = data.dryRun === "true";
       if (data.malId) data.malId = Number(data.malId);
       if (data.chapterOffset) data.chapterOffset = Number(data.chapterOffset);
@@ -699,6 +717,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
         + result.reviewQueued + " review, "
         + (result.reviewSkipped ?? 0) + " skipped, "
         + (result.searchDeferred ?? 0) + " deferred, "
+        + (result.searchBudgetSkipped ?? 0) + " budget-skipped, "
         + result.updatesQueued + " queued, "
         + (result.outboxPreviewed ?? 0) + " previewed, "
         + result.outboxSucceeded + " pushed, "
@@ -912,6 +931,7 @@ async function startFromEnv(): Promise<void> {
       mal,
       externalIdResolver: createExternalIdResolver(),
       dryRun: config.dryRun,
+      maxMalSearchesPerRun: config.maxMalSearchesPerRun,
     });
   };
   const initialConfig = await effectiveBridgeConfig(baseConfig, store);

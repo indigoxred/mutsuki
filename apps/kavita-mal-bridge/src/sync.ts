@@ -46,6 +46,7 @@ export interface BridgeSyncResult {
   reviewQueued: number;
   reviewSkipped?: number;
   searchDeferred?: number;
+  searchBudgetSkipped?: number;
   updatesQueued: number;
   outboxProcessed: number;
   outboxPreviewed?: number;
@@ -59,6 +60,7 @@ export async function runBridgeSyncOnce(input: {
   mal: BridgeMalClient;
   externalIdResolver?: BridgeExternalIdResolver;
   dryRun: boolean;
+  maxMalSearchesPerRun?: number;
 }): Promise<BridgeSyncResult> {
   const result: BridgeSyncResult = {
     seriesSeen: 0,
@@ -66,6 +68,7 @@ export async function runBridgeSyncOnce(input: {
     reviewQueued: 0,
     reviewSkipped: 0,
     searchDeferred: 0,
+    searchBudgetSkipped: 0,
     updatesQueued: 0,
     outboxProcessed: 0,
     outboxPreviewed: 0,
@@ -78,6 +81,12 @@ export async function runBridgeSyncOnce(input: {
   const reviewQueue = new Set(
     (await input.store.listReviews()).map((review) => review.kavitaSeriesId),
   );
+  const searchBudget = {
+    remaining:
+      input.maxMalSearchesPerRun === undefined
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, Math.floor(input.maxMalSearchesPerRun)),
+  };
 
   for (const item of series) {
     if (await input.store.isSeriesIgnored(item.kavitaSeriesId)) continue;
@@ -93,9 +102,14 @@ export async function runBridgeSyncOnce(input: {
         input.mal,
         item,
         input.externalIdResolver,
+        searchBudget,
       );
       if (mappingResult.status === "deferred") {
         result.searchDeferred = (result.searchDeferred ?? 0) + 1;
+        continue;
+      }
+      if (mappingResult.status === "budget-skipped") {
+        result.searchBudgetSkipped = (result.searchBudgetSkipped ?? 0) + 1;
         continue;
       }
       mapping = mappingResult.mapping;
@@ -177,10 +191,12 @@ async function createMappingOrReview(
   mal: BridgeMalClient,
   series: BridgeObservedSeries,
   externalIdResolver: BridgeExternalIdResolver | undefined,
+  searchBudget: { remaining: number },
 ): Promise<
   | { status: "mapped"; mapping: SeriesMappingRecord }
   | { status: "review"; mapping?: undefined }
   | { status: "deferred"; mapping?: undefined }
+  | { status: "budget-skipped"; mapping?: undefined }
 > {
   let decision = matchKavitaSeriesToMal({ series, searchCandidates: [] });
   if (decision.status === "review" && decision.reason === "no-candidates" && externalIdResolver) {
@@ -195,6 +211,8 @@ async function createMappingOrReview(
     }
   }
   if (decision.status === "review" && decision.reason === "no-candidates") {
+    if (searchBudget.remaining <= 0) return { status: "budget-skipped" };
+    searchBudget.remaining -= 1;
     let searchCandidates: MalSearchCandidate[];
     try {
       searchCandidates = await mal.searchManga(series);

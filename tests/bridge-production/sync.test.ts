@@ -334,3 +334,72 @@ test("sync does not re-search series already waiting in the review queue", async
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("sync caps new MAL search requests per run without blocking deterministic links", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-sync-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const kavita: BridgeKavitaClient = {
+    listSeries: async () => [
+      {
+        kavitaSeriesId: 51,
+        title: "Needs One Search",
+        contentType: "manga",
+        completedChapter: 1,
+        completedVolume: 1,
+        isSpecial: false,
+      },
+      {
+        kavitaSeriesId: 52,
+        title: "Deferred By Budget",
+        contentType: "manga",
+        completedChapter: 1,
+        completedVolume: 1,
+        isSpecial: false,
+      },
+      {
+        kavitaSeriesId: 53,
+        title: "Deterministic Despite Budget",
+        contentType: "manga",
+        webLinks: ["https://myanimelist.net/manga/999/Deterministic_Despite_Budget"],
+        completedChapter: 1,
+        completedVolume: 1,
+        isSpecial: false,
+      },
+    ],
+  };
+  let searches = 0;
+  const mal: BridgeMalClient = {
+    searchManga: async () => {
+      searches += 1;
+      return [];
+    },
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => ({ ok: true }),
+  };
+
+  try {
+    const result = await runBridgeSyncOnce({
+      store,
+      kavita,
+      mal,
+      dryRun: true,
+      maxMalSearchesPerRun: 1,
+    });
+
+    assert.equal(searches, 1);
+    assert.equal(result.reviewQueued, 1);
+    assert.equal(result.searchBudgetSkipped, 1);
+    assert.equal(result.autoMatched, 1);
+    assert.equal((await store.listReviews()).length, 1);
+    assert.equal(await store.getSeriesMapping(52), undefined);
+    assert.equal((await store.getSeriesMapping(53))?.malId, 999);
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
