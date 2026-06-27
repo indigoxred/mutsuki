@@ -110,7 +110,7 @@ async function renderHome(store: ProgressEventStore): Promise<string> {
 }
 
 function eventRow(event: MockProgressEvent): string {
-  const source = event.chapterSourceId ?? (event.kavitaSeriesId ? "Kavita" : event.source);
+  const source = event.readingSourceName || event.readingSourceId;
   const series = displaySeries(event);
   const chapter = displayChapter(event);
   return `<tr>

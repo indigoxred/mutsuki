@@ -41,10 +41,10 @@ device.
 The mock bridge is in `apps/mock-progress-bridge`. It receives events at
 `POST /api/progress-events`, stores them as JSONL, and displays them at `/`.
 
-The `Mutsuki Progress Bridge` extension is a separate diagnostic tracker/provider. It does not
-update Kavita or MAL. Its only job is to receive Paperback `TrackedMangaChapterReadAction` queue
-items for titles associated with that tracker and forward sanitized events to the mock bridge. This
-is the viable route for future cross-source events, because the action payload includes
+The `Mutsuki Progress Bridge` extension is a separate tracker/provider. It does not update Kavita or
+MAL inside Paperback. Its job is to receive Paperback `TrackedMangaChapterReadAction` queue items
+for titles associated with that tracker and forward sanitized events to a bridge. This is the viable
+route for future cross-source events, because the action payload includes
 `chapterSourceId`, `chapterMangaId`, the original source chapter id, source title metadata, and
 chapter/volume numbers. It still depends on Paperback associating the title with the
 tracker/provider, so it is not the rejected automatic source-to-Kavita workflow.
@@ -65,6 +65,9 @@ can be run beside Kavita during device testing.
 Events are sanitized and contain only IDs and metadata needed by the later bridge. Kavita-source
 diagnostic events include:
 
+- `schemaVersion: 2`
+- event source: `mutsuki-kavita-source`
+- reading source id/name/kind, with kind `kavita`
 - Paperback action id
 - Paperback manga/chapter id
 - Kavita series id
@@ -77,6 +80,9 @@ diagnostic events include:
 
 Generic tracker events include:
 
+- `schemaVersion: 2`
+- event source: `paperback-progress-bridge`
+- reading source id/name/kind, with external sources such as MangaDex marked `external`
 - Paperback action id
 - tracking target id
 - original `chapterSourceId`
@@ -85,8 +91,9 @@ Generic tracker events include:
 - chapter and volume numbers seen by Paperback
 - title metadata supplied in the read action
 
-The mock bridge UI prefers human-readable source title and chapter number fields, while retaining the
-raw Paperback chapter id for debugging.
+The mock and production bridge UIs prefer human-readable source title and chapter number fields,
+while retaining the raw Paperback chapter id for debugging. Older v1 events are still accepted and
+normalized so the diagnostic bridge remains useful during upgrades.
 
 Events must not contain:
 
@@ -124,6 +131,10 @@ includes:
   or transient MAL/API failures;
 - scheduled polling with overlap prevention;
 - audit logging;
+- `POST /api/progress-events` for normalized Paperback tracker read events;
+- durable `read_events` storage and source-policy rows keyed by `readingSourceId`;
+- per-source MAL enable/disable and Kavita mirror policy controls, with Kavita mirroring disabled
+  by default for external Paperback sources;
 - progress extraction from current Kavita `VolumeDto`/`ChapterDto` fields via
   `/api/Series/volumes?seriesId=...`, including fully read volume/chapter detection, standalone
   EPUB sentinel volume detection, and ignoring special chapters for chapter high-water marks.
@@ -140,7 +151,8 @@ Live validation on 2026-06-26 against the user's Kavita server confirmed:
 - decimal physical volumes are floored conservatively for MAL's integer volume progress field.
 
 The next hardening pass should improve the Web UI around filtering, searching, and bulk-editing
-mappings.
+mappings, and wire external Paperback read events into MAL matching/outbox processing without
+requiring a Kavita match. Missing Kavita mappings must not block external-source MAL tracking.
 
 Default policies:
 

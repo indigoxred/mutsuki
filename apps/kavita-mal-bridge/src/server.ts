@@ -23,6 +23,11 @@ import {
   effectiveBridgeConfig,
   refreshStoredMalTokenIfNeeded,
 } from "./runtime.js";
+import {
+  defaultSourcePolicyForEvent,
+  parseBridgeReadEvent,
+  sourcePolicyFromInput,
+} from "./progress-events.js";
 import { BridgeScheduler, type BridgeSchedulerResult } from "./scheduler.js";
 import { runBridgeSyncOnce, type BridgeObservedSeries, type BridgeSyncResult } from "./sync.js";
 import { SqliteBridgeStore, type SeriesMappingRecord } from "./storage.js";
@@ -66,10 +71,59 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           mappings: (await options.store.listSeriesMappings()).length,
           unresolved: (await options.store.listReviews()).length,
           ignored: (await options.store.listIgnoredSeries()).length,
+          readEvents: await options.store.readEventCount(),
+          sourcePolicies: (await options.store.listSourcePolicies()).length,
           outbox,
           scheduler: schedulerStatus(options),
           audit: (await options.store.listAuditLogs(25)).slice(0, 10),
         });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/progress-events") {
+        const limit = queryLimit(url, 50, 250);
+        await respondJson(response, { events: await options.store.listReadEvents(limit) });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/progress-events") {
+        const event = parseBridgeReadEvent(parseJsonRecord(await readRequestBody(request)));
+        await options.store.appendReadEvent(event);
+        await options.store.ensureSourcePolicy(defaultSourcePolicyForEvent(event));
+        await options.store.audit({
+          type: "progress",
+          kavitaSeriesId: event.kavitaSeriesId,
+          message: `Received Paperback read event from ${event.readingSourceId}.`,
+          dataJson: JSON.stringify({
+            actionId: event.actionId,
+            readingSourceId: event.readingSourceId,
+            readingSourceKind: event.readingSourceKind,
+            sourceMangaId: event.sourceMangaId,
+            sourceChapterId: event.sourceChapterId,
+          }),
+        });
+        await respondJson(response, { ok: true, event }, 202);
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/source-policies") {
+        await respondJson(response, { items: await options.store.listSourcePolicies() });
+        return;
+      }
+      const sourcePolicy = /^\/api\/source-policies\/([^/]+)$/u.exec(url.pathname);
+      if (request.method === "POST" && sourcePolicy?.[1]) {
+        const readingSourceId = decodeURIComponent(sourcePolicy[1]);
+        const existing = await options.store.getSourcePolicy(readingSourceId);
+        const body = parseJsonRecord(await readRequestBody(request));
+        const policy = sourcePolicyFromInput(readingSourceId, body, existing);
+        await options.store.upsertSourcePolicy(policy);
+        await options.store.audit({
+          type: "system",
+          message: `Source policy updated for ${policy.readingSourceId}.`,
+          dataJson: JSON.stringify({
+            readingSourceId: policy.readingSourceId,
+            malEnabled: policy.malEnabled,
+            kavitaMirrorMode: policy.kavitaMirrorMode,
+          }),
+        });
+        await respondJson(response, { ok: true, policy });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/outbox") {
@@ -488,17 +542,27 @@ function positiveIntegerSetting(value: string | undefined): number | undefined {
 }
 
 async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string> {
-  const [mappings, reviews, audit, settings, tokens, outboxItems, outboxCounts] = await Promise.all(
-    [
-      options.store.listSeriesMappings(),
-      options.store.listReviews(),
-      options.store.listAuditLogs(20),
-      options.store.listSettings(),
-      options.store.getOAuthTokens(),
-      options.store.listOutbox(25),
-      options.store.outboxCounts(),
-    ],
-  );
+  const [
+    mappings,
+    reviews,
+    audit,
+    settings,
+    tokens,
+    outboxItems,
+    outboxCounts,
+    readEvents,
+    sourcePolicies,
+  ] = await Promise.all([
+    options.store.listSeriesMappings(),
+    options.store.listReviews(),
+    options.store.listAuditLogs(20),
+    options.store.listSettings(),
+    options.store.getOAuthTokens(),
+    options.store.listOutbox(25),
+    options.store.outboxCounts(),
+    options.store.listReadEvents(25),
+    options.store.listSourcePolicies(),
+  ]);
   const ignored = await options.store.listIgnoredSeries();
   const effectiveDryRun = settingBoolean(settings.dryRun, options.dryRun);
   const schedule = schedulerStatus(options);
@@ -578,6 +642,17 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <thead><tr><th>Created</th><th>Status</th><th>Kavita Series</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
     <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
   </table>
+  <h2>Source Policies</h2>
+  <p>${sourcePolicies.length} Paperback reading source${sourcePolicies.length === 1 ? "" : "s"} observed.</p>
+  <table>
+    <thead><tr><th>Source</th><th>MAL</th><th>Kavita Mirror</th><th>Save</th></tr></thead>
+    <tbody>${sourcePolicies.map(renderSourcePolicyRow).join("")}</tbody>
+  </table>
+  <h2>Recent Paperback Read Events</h2>
+  <table>
+    <thead><tr><th>Received</th><th>Source</th><th>Kind</th><th>Series</th><th>Chapter</th><th>Kavita</th></tr></thead>
+    <tbody>${readEvents.map(renderReadEventRow).join("")}</tbody>
+  </table>
   <h2>Unresolved Matches</h2>
   <table>
     <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Approve</th></tr></thead>
@@ -604,6 +679,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       if (data.pollIntervalSeconds) data.pollIntervalSeconds = Number(data.pollIntervalSeconds);
       if (data.maxMalSearchesPerRun) data.maxMalSearchesPerRun = Number(data.maxMalSearchesPerRun);
       if (data.dryRun) data.dryRun = data.dryRun === "true";
+      if (data.malEnabled) data.malEnabled = data.malEnabled === "true";
       if (data.malId) data.malId = Number(data.malId);
       if (data.chapterOffset) data.chapterOffset = Number(data.chapterOffset);
       if (data.volumeOffset) data.volumeOffset = Number(data.volumeOffset);
@@ -702,6 +778,17 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
         status.textContent = response.ok ? "Outbox retry queued." : await responseErrorMessage(response, "Outbox retry failed.");
       });
     }
+    for (const form of document.querySelectorAll(".source-policy-form")) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch(event.currentTarget.dataset.endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formJson(event.currentTarget)),
+        });
+        status.textContent = response.ok ? "Source policy saved." : await responseErrorMessage(response, "Source policy save failed.");
+      });
+    }
     async function responseErrorMessage(response, fallback) {
       try {
         const body = await response.json();
@@ -758,6 +845,42 @@ function renderOutboxRow(
       ? `<form class="outbox-retry-form" data-endpoint="/api/outbox/${encodeURIComponent(item.id)}/retry"><button type="submit">Retry</button></form>`
       : "";
   return `<tr><td>${escapeHtml(item.createdAt)}</td><td>${escapeHtml(item.status)}</td><td>${item.kavitaSeriesId}</td><td>${item.malId}</td><td>${escapeHtml(JSON.stringify(item.update))}</td><td>${item.attempts}</td><td>${escapeHtml(item.lastError ?? "")}</td><td>${action}</td></tr>`;
+}
+
+function renderSourcePolicyRow(
+  policy: Awaited<ReturnType<SqliteBridgeStore["listSourcePolicies"]>>[number],
+): string {
+  return `<tr><td>${escapeHtml(policy.readingSourceName)}<br /><code>${escapeHtml(policy.readingSourceId)}</code></td><td>
+    <form class="source-policy-form" data-endpoint="/api/source-policies/${encodeURIComponent(policy.readingSourceId)}">
+      <input name="readingSourceName" value="${escapeHtml(policy.readingSourceName)}" />
+      <select name="malEnabled">
+        <option value="true"${policy.malEnabled ? " selected" : ""}>enabled</option>
+        <option value="false"${!policy.malEnabled ? " selected" : ""}>disabled</option>
+      </select>
+    </td><td>
+      <select name="kavitaMirrorMode">
+        <option value="disabled"${policy.kavitaMirrorMode === "disabled" ? " selected" : ""}>disabled</option>
+        <option value="kavita-source-only"${policy.kavitaMirrorMode === "kavita-source-only" ? " selected" : ""}>kavita-source-only</option>
+        <option value="approved-external-mappings"${policy.kavitaMirrorMode === "approved-external-mappings" ? " selected" : ""}>approved-external-mappings</option>
+      </select>
+    </td><td><button type="submit">Save</button></form></td></tr>`;
+}
+
+function renderReadEventRow(
+  event: Awaited<ReturnType<SqliteBridgeStore["listReadEvents"]>>[number],
+): string {
+  const chapter = event.sourceChapterVolume
+    ? `Vol. ${formatBridgeNumber(event.sourceChapterVolume)}, Ch. ${formatBridgeNumber(event.sourceChapterNumber)}`
+    : `Ch. ${formatBridgeNumber(event.sourceChapterNumber)}`;
+  const kavita =
+    event.kavitaSeriesId === undefined
+      ? ""
+      : `series ${event.kavitaSeriesId}${event.kavitaChapterId === undefined ? "" : `, chapter ${event.kavitaChapterId}`}`;
+  return `<tr><td>${escapeHtml(event.receivedAt)}</td><td>${escapeHtml(event.readingSourceName)}<br /><code>${escapeHtml(event.sourceChapterId)}</code></td><td>${escapeHtml(event.readingSourceKind)}</td><td>${escapeHtml(event.sourceTitle || event.sourceMangaId)}</td><td>${escapeHtml(chapter)}</td><td>${escapeHtml(kavita)}</td></tr>`;
+}
+
+function formatBridgeNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(value).replace(/\.0+$/u, "");
 }
 
 function trackingModeOption(

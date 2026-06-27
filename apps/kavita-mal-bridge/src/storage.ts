@@ -2,6 +2,13 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { BridgeOutboxItem, OutboxStore } from "./outbox.js";
 import type { BridgeTrackingMode } from "./policy.js";
+import {
+  DEFAULT_SOURCE_POLICY,
+  type BridgeReadEventRecord,
+  type SourcePolicyRecord,
+} from "./progress-events.js";
+
+export { DEFAULT_SOURCE_POLICY };
 
 export interface SeriesMappingRecord {
   kavitaSeriesId: number;
@@ -115,6 +122,34 @@ export class SqliteBridgeStore implements OutboxStore {
         message TEXT NOT NULL,
         data_json TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS read_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        schema_version INTEGER NOT NULL,
+        event_source TEXT NOT NULL,
+        reading_source_id TEXT NOT NULL,
+        reading_source_name TEXT NOT NULL,
+        reading_source_kind TEXT NOT NULL,
+        action_id TEXT NOT NULL,
+        occurred_at TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        source_manga_id TEXT NOT NULL,
+        source_chapter_id TEXT NOT NULL,
+        source_title TEXT NOT NULL,
+        source_chapter_number REAL NOT NULL,
+        source_chapter_volume REAL,
+        kavita_series_id INTEGER,
+        kavita_chapter_id INTEGER,
+        chapter_kind TEXT NOT NULL,
+        raw_event_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS source_policies (
+        reading_source_id TEXT PRIMARY KEY,
+        reading_source_name TEXT NOT NULL,
+        mal_enabled INTEGER NOT NULL,
+        kavita_mirror_mode TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS bridge_settings (
         key TEXT PRIMARY KEY,
@@ -292,6 +327,98 @@ export class SqliteBridgeStore implements OutboxStore {
       dataJson: row.data_json ?? undefined,
       createdAt: row.created_at,
     }));
+  }
+
+  async appendReadEvent(record: BridgeReadEventRecord): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO read_events (
+            schema_version, event_source, reading_source_id, reading_source_name,
+            reading_source_kind, action_id, occurred_at, received_at, source_manga_id,
+            source_chapter_id, source_title, source_chapter_number, source_chapter_volume,
+            kavita_series_id, kavita_chapter_id, chapter_kind, raw_event_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        record.schemaVersion,
+        record.eventSource,
+        record.readingSourceId,
+        record.readingSourceName,
+        record.readingSourceKind,
+        record.actionId,
+        record.occurredAt,
+        record.receivedAt,
+        record.sourceMangaId,
+        record.sourceChapterId,
+        record.sourceTitle,
+        record.sourceChapterNumber,
+        record.sourceChapterVolume ?? null,
+        record.kavitaSeriesId ?? null,
+        record.kavitaChapterId ?? null,
+        record.chapterKind,
+        record.rawEventJson,
+      );
+  }
+
+  async listReadEvents(limit = 100): Promise<BridgeReadEventRecord[]> {
+    return (
+      this.db
+        .prepare("SELECT * FROM read_events ORDER BY id DESC LIMIT ?")
+        .all(limit) as unknown as ReadEventRow[]
+    ).map(readEventFromRow);
+  }
+
+  async readEventCount(): Promise<number> {
+    const row = this.db.prepare("SELECT COUNT(*) AS count FROM read_events").get() as
+      | { count: number }
+      | undefined;
+    return row?.count ?? 0;
+  }
+
+  async getSourcePolicy(readingSourceId: string): Promise<SourcePolicyRecord | undefined> {
+    const row = this.db
+      .prepare("SELECT * FROM source_policies WHERE reading_source_id = ?")
+      .get(readingSourceId) as SourcePolicyRow | undefined;
+    return row ? sourcePolicyFromRow(row) : undefined;
+  }
+
+  async upsertSourcePolicy(record: SourcePolicyRecord): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO source_policies (
+            reading_source_id, reading_source_name, mal_enabled, kavita_mirror_mode, updated_at
+          ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(reading_source_id) DO UPDATE SET
+            reading_source_name = excluded.reading_source_name,
+            mal_enabled = excluded.mal_enabled,
+            kavita_mirror_mode = excluded.kavita_mirror_mode,
+            updated_at = CURRENT_TIMESTAMP
+        `,
+      )
+      .run(
+        record.readingSourceId,
+        record.readingSourceName,
+        record.malEnabled ? 1 : 0,
+        record.kavitaMirrorMode,
+      );
+  }
+
+  async ensureSourcePolicy(defaultPolicy: SourcePolicyRecord): Promise<SourcePolicyRecord> {
+    const existing = await this.getSourcePolicy(defaultPolicy.readingSourceId);
+    if (existing) return existing;
+    await this.upsertSourcePolicy(defaultPolicy);
+    return defaultPolicy;
+  }
+
+  async listSourcePolicies(): Promise<SourcePolicyRecord[]> {
+    return (
+      this.db
+        .prepare("SELECT * FROM source_policies ORDER BY reading_source_name, reading_source_id")
+        .all() as unknown as SourcePolicyRow[]
+    ).map(sourcePolicyFromRow);
   }
 
   async saveSetting(key: string, value: string): Promise<void> {
@@ -542,6 +669,33 @@ interface AuditRow {
   created_at: string;
 }
 
+interface ReadEventRow {
+  schema_version: 1 | 2;
+  event_source: BridgeReadEventRecord["eventSource"];
+  reading_source_id: string;
+  reading_source_name: string;
+  reading_source_kind: BridgeReadEventRecord["readingSourceKind"];
+  action_id: string;
+  occurred_at: string;
+  received_at: string;
+  source_manga_id: string;
+  source_chapter_id: string;
+  source_title: string;
+  source_chapter_number: number;
+  source_chapter_volume: number | null;
+  kavita_series_id: number | null;
+  kavita_chapter_id: number | null;
+  chapter_kind: BridgeReadEventRecord["chapterKind"];
+  raw_event_json: string;
+}
+
+interface SourcePolicyRow {
+  reading_source_id: string;
+  reading_source_name: string;
+  mal_enabled: number;
+  kavita_mirror_mode: SourcePolicyRecord["kavitaMirrorMode"];
+}
+
 interface OutboxRow {
   id: string;
   kavita_series_id: number;
@@ -590,6 +744,37 @@ function mappingFromRow(row: MappingRow): SeriesMappingRecord {
     lastObservedVolume: row.last_observed_volume,
     lastPushedChapter: row.last_pushed_chapter,
     lastPushedVolume: row.last_pushed_volume,
+  };
+}
+
+function readEventFromRow(row: ReadEventRow): BridgeReadEventRecord {
+  return {
+    schemaVersion: row.schema_version,
+    eventSource: row.event_source,
+    readingSourceId: row.reading_source_id,
+    readingSourceName: row.reading_source_name,
+    readingSourceKind: row.reading_source_kind,
+    actionId: row.action_id,
+    occurredAt: row.occurred_at,
+    receivedAt: row.received_at,
+    sourceMangaId: row.source_manga_id,
+    sourceChapterId: row.source_chapter_id,
+    sourceTitle: row.source_title,
+    sourceChapterNumber: row.source_chapter_number,
+    sourceChapterVolume: row.source_chapter_volume ?? undefined,
+    kavitaSeriesId: row.kavita_series_id ?? undefined,
+    kavitaChapterId: row.kavita_chapter_id ?? undefined,
+    chapterKind: row.chapter_kind,
+    rawEventJson: row.raw_event_json,
+  };
+}
+
+function sourcePolicyFromRow(row: SourcePolicyRow): SourcePolicyRecord {
+  return {
+    readingSourceId: row.reading_source_id,
+    readingSourceName: row.reading_source_name,
+    malEnabled: row.mal_enabled === 1,
+    kavitaMirrorMode: row.kavita_mirror_mode,
   };
 }
 

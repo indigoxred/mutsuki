@@ -11,12 +11,21 @@ export type KavitaChapterKind = "manga" | "book";
 
 export interface KavitaProgressBridgeEvent {
   version: 1;
+  schemaVersion: 2;
   source: "paperback-mutsuki";
+  eventSource: "mutsuki-kavita-source";
   actionId: string;
   occurredAt: string;
   receivedAt: string;
   mangaId: string;
   paperbackChapterId: string;
+  readingSourceId: "Kavita";
+  readingSourceName: "Mutsuki Kavita";
+  readingSourceKind: "kavita";
+  sourceMangaId: string;
+  sourceChapterId: string;
+  sourceChapterNumber: number;
+  sourceChapterVolume?: number;
   kavitaSeriesId: number;
   kavitaChapterId: number;
   chapterKind: KavitaChapterKind;
@@ -120,12 +129,21 @@ function kavitaReadActionFromPaperback(
 
   return {
     version: 1,
+    schemaVersion: 2,
     source: "paperback-mutsuki",
+    eventSource: "mutsuki-kavita-source",
     actionId: action.id,
     occurredAt: dateToIso(action.creationDate),
     receivedAt: receivedAt.toISOString(),
     mangaId: action.sourceManga.mangaId,
     paperbackChapterId: action.chapterId,
+    readingSourceId: "Kavita",
+    readingSourceName: "Mutsuki Kavita",
+    readingSourceKind: "kavita",
+    sourceMangaId: action.chapterMangaId || action.sourceManga.mangaId,
+    sourceChapterId: action.chapterId,
+    sourceChapterNumber: action.chapterNum,
+    sourceChapterVolume: action.chapterVolume,
     kavitaSeriesId,
     kavitaChapterId,
     chapterKind,

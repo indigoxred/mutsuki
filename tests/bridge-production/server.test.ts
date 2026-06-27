@@ -133,6 +133,129 @@ test("bridge server exposes outbox status and recent items", async () => {
   }
 });
 
+test("bridge server receives Paperback read events with source identity and default policy", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/progress-events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schemaVersion: 2,
+        version: 1,
+        source: "paperback-progress-provider",
+        eventSource: "paperback-progress-bridge",
+        actionId: "mangadex-read-1",
+        occurredAt: "2026-06-26T00:00:00.000Z",
+        receivedAt: "2026-06-26T00:00:01.000Z",
+        mangaId: "bridge-track:external-story",
+        paperbackChapterId: "chapter-1",
+        chapterSourceId: "MangaDex",
+        readingSourceId: "MangaDex",
+        readingSourceName: "MangaDex",
+        readingSourceKind: "external",
+        chapterMangaId: "mangadex-title-1",
+        sourceMangaId: "mangadex-title-1",
+        sourceChapterId: "chapter-1",
+        sourceChapterNumber: 1,
+        sourceTitle: "External Story",
+        chapterKind: "manga",
+        chapterNum: 1,
+        isLastInVolume: false,
+        shouldMarkKavitaRead: false,
+        kavitaMarkedRead: false,
+        title: "Chapter 1",
+        listingMode: "tracker-bridge",
+        role: "read-action",
+      }),
+    });
+    assert.equal(response.status, 202);
+
+    const events = await fetchJson(`http://127.0.0.1:${port}/api/progress-events`);
+    const policies = await fetchJson(`http://127.0.0.1:${port}/api/source-policies`);
+    const status = await fetchJson(`http://127.0.0.1:${port}/api/status`);
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+
+    assert.equal(events.events.length, 1);
+    assert.equal(events.events[0].readingSourceId, "MangaDex");
+    assert.equal(events.events[0].readingSourceKind, "external");
+    assert.equal(events.events[0].sourceTitle, "External Story");
+    assert.equal(policies.items[0].readingSourceId, "MangaDex");
+    assert.equal(policies.items[0].malEnabled, true);
+    assert.equal(policies.items[0].kavitaMirrorMode, "disabled");
+    assert.equal(status.readEvents, 1);
+    assert.equal(status.sourcePolicies, 1);
+    assert.match(html, /Recent Paperback Read Events/u);
+    assert.match(html, /Source Policies/u);
+    assert.match(html, /External Story/u);
+    assert.match(html, /approved-external-mappings/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server can disable MAL or Kavita mirroring per reading source", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    await postJson(`http://127.0.0.1:${port}/api/source-policies/MangaDex`, {
+      readingSourceName: "MangaDex",
+      malEnabled: false,
+      kavitaMirrorMode: "approved-external-mappings",
+    });
+
+    const policy = await fetchJson(`http://127.0.0.1:${port}/api/source-policies`);
+
+    assert.equal(policy.items[0].readingSourceId, "MangaDex");
+    assert.equal(policy.items[0].malEnabled, false);
+    assert.equal(policy.items[0].kavitaMirrorMode, "approved-external-mappings");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge server requeues a failed outbox item for manual retry", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));

@@ -69,14 +69,22 @@ test("mock progress bridge accepts generic Paperback tracker events", async () =
     const baseUrl = `http://127.0.0.1:${port}`;
     const event = {
       version: 1,
+      schemaVersion: 2,
       source: "paperback-progress-provider",
+      eventSource: "paperback-progress-bridge",
       actionId: "generic-read-1",
       occurredAt: "2026-06-25T00:00:00.000Z",
       receivedAt: "2026-06-25T00:00:00.000Z",
       mangaId: "bridge-track:a-story",
       paperbackChapterId: "05bab466-2efc-488f-bea9-90ca849c4f11",
       chapterSourceId: "MangaDex",
+      readingSourceId: "MangaDex",
+      readingSourceName: "MangaDex",
+      readingSourceKind: "external",
       chapterMangaId: "mangadex-title-1",
+      sourceMangaId: "mangadex-title-1",
+      sourceChapterId: "05bab466-2efc-488f-bea9-90ca849c4f11",
+      sourceChapterNumber: 1,
       chapterKind: "manga",
       chapterNum: 1,
       isLastInVolume: false,
@@ -99,6 +107,8 @@ test("mock progress bridge accepts generic Paperback tracker events", async () =
     const payload = (await list.json()) as { events: (typeof event)[] };
     assert.equal(payload.events.length, 1);
     assert.equal(payload.events[0]?.chapterSourceId, "MangaDex");
+    assert.equal(payload.events[0]?.readingSourceKind, "external");
+    assert.equal(payload.events[0]?.readingSourceId, "MangaDex");
     assert.equal(payload.events[0]?.chapterMangaId, "mangadex-title-1");
 
     const page = await fetch(baseUrl);
@@ -107,6 +117,53 @@ test("mock progress bridge accepts generic Paperback tracker events", async () =
     assert.match(html, /A Story About Wanting to Commit Suicide/u);
     assert.match(html, /Ch\. 1/u);
     assert.match(html, /05bab466-2efc-488f-bea9-90ca849c4f11/u);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error: Error | undefined) => (error ? reject(error) : resolve())),
+    );
+  }
+});
+
+test("mock progress bridge derives source identity for legacy v1 events", async () => {
+  const store = createMemoryProgressEventStore();
+  const server = createMockProgressBridgeServer({ store });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  try {
+    const { port } = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const event = {
+      version: 1,
+      source: "paperback-mutsuki",
+      actionId: "kavita-read-1",
+      occurredAt: "2026-06-25T00:00:00.000Z",
+      receivedAt: "2026-06-25T00:00:00.000Z",
+      mangaId: "kavita-series:7",
+      paperbackChapterId: "kavita-chapter:55",
+      kavitaSeriesId: 7,
+      kavitaChapterId: 55,
+      chapterKind: "manga",
+      chapterNum: 4,
+      isLastInVolume: false,
+      shouldMarkKavitaRead: true,
+      kavitaMarkedRead: true,
+      title: "Chapter 4",
+      listingMode: "",
+      role: "",
+    };
+
+    const post = await fetch(`${baseUrl}/api/progress-events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(event),
+    });
+    assert.equal(post.status, 202);
+
+    const list = await fetch(`${baseUrl}/api/progress-events`);
+    const payload = (await list.json()) as {
+      events: Array<typeof event & { readingSourceId: string; readingSourceKind: string }>;
+    };
+    assert.equal(payload.events[0]?.readingSourceId, "Kavita");
+    assert.equal(payload.events[0]?.readingSourceKind, "kavita");
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((error: Error | undefined) => (error ? reject(error) : resolve())),

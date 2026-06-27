@@ -3,7 +3,7 @@ import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/typ
 export default {
   name: "Mutsuki Progress Bridge",
   description: "Diagnostic tracker that forwards Paperback read-action queue events to a bridge.",
-  version: "0.1.2",
+  version: "0.1.3",
   icon: "icon.png",
   language: "en",
   contentRating: ContentRating.EVERYONE,

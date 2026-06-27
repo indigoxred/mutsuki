@@ -42,6 +42,14 @@ test("completed manga read actions mark Kavita once and acknowledge duplicate qu
   );
   assert.equal(events[0]?.shouldMarkKavitaRead, true);
   assert.equal(events[0]?.kavitaMarkedRead, true);
+  assert.equal(events[0]?.schemaVersion, 2);
+  assert.equal(events[0]?.eventSource, "mutsuki-kavita-source");
+  assert.equal(events[0]?.readingSourceId, "Kavita");
+  assert.equal(events[0]?.readingSourceName, "Mutsuki Kavita");
+  assert.equal(events[0]?.readingSourceKind, "kavita");
+  assert.equal(events[0]?.sourceMangaId, "kavita-series:7");
+  assert.equal(events[0]?.sourceChapterId, "kavita-chapter:55");
+  assert.equal(events[0]?.sourceChapterNumber, 12);
 });
 
 test("split EPUB parts only mark Kavita read on the final part", async () => {

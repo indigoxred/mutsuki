@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { enqueueMalUpdate, processOutboxOnce } from "../../apps/kavita-mal-bridge/src/outbox.js";
-import { SqliteBridgeStore } from "../../apps/kavita-mal-bridge/src/storage.js";
+import {
+  DEFAULT_SOURCE_POLICY,
+  SqliteBridgeStore,
+} from "../../apps/kavita-mal-bridge/src/storage.js";
 
 test("SQLite store persists mappings, outbox items, review queue, and audit logs", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-bridge-"));
@@ -58,6 +61,28 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
       expiresAt: "2026-06-26T01:00:00.000Z",
       tokenType: "Bearer",
     });
+    await store.appendReadEvent({
+      schemaVersion: 2,
+      eventSource: "paperback-progress-bridge",
+      readingSourceId: "MangaDex",
+      readingSourceName: "MangaDex",
+      readingSourceKind: "external",
+      actionId: "read-event-1",
+      occurredAt: "2026-06-26T00:00:00.000Z",
+      receivedAt: "2026-06-26T00:00:01.000Z",
+      sourceMangaId: "mangadex-title-1",
+      sourceChapterId: "chapter-1",
+      sourceTitle: "External Story",
+      sourceChapterNumber: 1,
+      chapterKind: "manga",
+      rawEventJson: "{}",
+    });
+    await store.upsertSourcePolicy({
+      ...DEFAULT_SOURCE_POLICY,
+      readingSourceId: "MangaDex",
+      readingSourceName: "MangaDex",
+      kavitaMirrorMode: "disabled",
+    });
 
     const reopened = new SqliteBridgeStore(dbPath);
     reopened.migrate();
@@ -97,6 +122,14 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     assert.equal(await reopened.getSetting("kavitaBaseUrl"), "https://read.example.test");
     assert.equal((await reopened.getOAuthState("state-1"))?.codeVerifier, "verifier-1");
     assert.equal((await reopened.getOAuthTokens())?.accessToken, "access-token");
+    const readEvents = await reopened.listReadEvents();
+    assert.equal(readEvents.length, 1);
+    assert.equal(readEvents[0]?.readingSourceId, "MangaDex");
+    assert.equal(readEvents[0]?.readingSourceKind, "external");
+    assert.equal(readEvents[0]?.sourceTitle, "External Story");
+    const policy = await reopened.getSourcePolicy("MangaDex");
+    assert.equal(policy?.malEnabled, true);
+    assert.equal(policy?.kavitaMirrorMode, "disabled");
 
     store.close();
     reopened.close();

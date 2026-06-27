@@ -13,8 +13,8 @@ It also includes two bridge apps:
 - `apps/mock-progress-bridge`: a diagnostic Phase 1 receiver which proves Paperback-to-bridge
   networking and displays queued read actions forwarded by the Mutsuki Progress Bridge tracker.
 - `apps/kavita-mal-bridge`: the Phase 2 production bridge foundation which polls Kavita as the
-  progress source of truth, stores mappings/outbox/audit/OAuth state in SQLite, and prepares
-  monotonic MAL updates.
+  progress source of truth, receives normalized Paperback read events, stores source
+  policies/mappings/outbox/audit/OAuth state in SQLite, and prepares monotonic MAL updates.
 
 Automatic read-completion delivery from Paperback to the original Kavita source is not available in
 the observed runtime, so the production bridge currently depends on Kavita progress being updated by
@@ -81,10 +81,11 @@ bridge. It only proves iOS/Paperback networking to the bridge; it is not a read-
 
 The **Mutsuki Progress Bridge** tracker is the supported diagnostic path for actual queued read
 actions. It can receive `TrackedMangaChapterReadAction` items from Paperback for titles associated
-with that tracker and forward sanitized events to the mock bridge. This is useful for proving tracker
-queue behavior and for future cross-source bridge work, including MangaDex or other installed
-sources. It still depends on Paperback associating the title with the tracker; it does not solve the
-rejected per-title manual-linking problem by itself.
+with that tracker and forward sanitized events to either bridge. Event payloads now include
+`readingSourceId`, `readingSourceName`, and `readingSourceKind`, so the bridge can distinguish
+Mutsuki Kavita reads from external sources such as MangaDex or WeebCentral. It still depends on
+Paperback associating the title with the tracker; it does not create a global read-event feed by
+itself.
 
 Run the mock bridge:
 
@@ -116,6 +117,11 @@ Kavita-to-MAL mappings and desired progress updates. The bridge can start with o
 database path configured; use the local setup page to save the Kavita URL/API key, MAL OAuth client
 details, poll interval, max MAL searches per run, and dry-run mode. MAL access and refresh tokens
 are stored in SQLite after OAuth authorization and refreshed before scheduled sync runs.
+
+The production bridge also accepts Paperback tracker events at `POST /api/progress-events` and
+shows them in **Recent Paperback Read Events**. Each observed Paperback source gets a **Source
+Policies** row. MAL handling can be disabled per source, and Kavita mirroring defaults to disabled
+for external sources so titles that are not in Kavita do not clutter a Kavita review queue.
 
 Use **Preview Kavita progress** on the setup page, or call
 `GET /api/kavita/observed-progress?limit=25`, to verify the bridge can read Kavita's observed

@@ -37,6 +37,14 @@ test("progress bridge tracker forwards queued read actions from any source", asy
   assert.deepEqual(result, { successfulItems: ["read-1"], failedItems: [] });
   assert.equal(events.length, 1);
   assert.equal(events[0]?.source, "paperback-progress-provider");
+  assert.equal(events[0]?.schemaVersion, 2);
+  assert.equal(events[0]?.eventSource, "paperback-progress-bridge");
+  assert.equal(events[0]?.readingSourceId, "MangaDex");
+  assert.equal(events[0]?.readingSourceName, "MangaDex");
+  assert.equal(events[0]?.readingSourceKind, "external");
+  assert.equal(events[0]?.sourceMangaId, "mangadex-title-1");
+  assert.equal(events[0]?.sourceChapterId, "05bab466-2efc-488f-bea9-90ca849c4f11");
+  assert.equal(events[0]?.sourceChapterNumber, 1);
   assert.equal(events[0]?.mangaId, "bridge-track:a-story");
   assert.equal(events[0]?.chapterSourceId, "MangaDex");
   assert.equal(events[0]?.chapterMangaId, "mangadex-title-1");
@@ -69,9 +77,48 @@ test("progress bridge tracker resolves source titles and fallback chapter labels
   });
 
   assert.equal(events[0]?.sourceTitle, "A Story About Wanting to Commit Suicide");
+  assert.equal(events[0]?.sourceTitle, events[0]?.sourceTitleForMatching);
   assert.equal(events[0]?.title, "Chapter 12");
   assert.equal(events[0]?.chapterNum, 12);
   assert.equal(events[0]?.chapterVolume, 0);
+});
+
+test("progress bridge tracker preserves exact Kavita identifiers when the read source is Kavita", async () => {
+  const events: ProgressBridgeEvent[] = [];
+
+  await processProgressBridgeReadActionQueue({
+    actions: [
+      action({
+        id: "read-kavita",
+        trackerMangaId: "bridge-track:kavita-story",
+        chapterSourceId: "Kavita",
+        chapterMangaId: "kavita-series:7",
+        chapterId: "kavita-book:99:whole:v1",
+        chapterNum: 1,
+        chapterVolume: 4,
+        sourceTitle: "Kavita Story",
+        chapterTitle: "Volume 4",
+        additionalInfo: {
+          kavitaSeriesId: "7",
+          kavitaChapterId: "99",
+          isLastInVolume: "true",
+          listingMode: "physical-books",
+        },
+      }),
+    ],
+    sendBridgeEvent: async (event) => {
+      events.push(event);
+    },
+    now: () => new Date("2026-06-25T00:00:00.000Z"),
+  });
+
+  assert.equal(events[0]?.readingSourceKind, "kavita");
+  assert.equal(events[0]?.readingSourceId, "Kavita");
+  assert.equal(events[0]?.kavitaSeriesId, 7);
+  assert.equal(events[0]?.kavitaChapterId, 99);
+  assert.equal(events[0]?.chapterKind, "book");
+  assert.equal(events[0]?.isLastInVolume, true);
+  assert.equal(events[0]?.shouldMarkKavitaRead, false);
 });
 
 test("progress bridge tracker leaves failed posts retryable", async () => {
@@ -144,6 +191,7 @@ function action(input: {
   chapterVolume?: number;
   sourceTitle?: string;
   chapterTitle?: string;
+  additionalInfo?: Record<string, string>;
 }): TrackedMangaChapterReadAction {
   const trackerManga = sourceManga(input.trackerMangaId);
   const sourceMangaForChapter = sourceManga(input.chapterMangaId, input.sourceTitle);
@@ -154,6 +202,7 @@ function action(input: {
     chapNum: input.chapterNum,
     volume: input.chapterVolume,
     title: input.chapterTitle ?? `Chapter ${input.chapterNum}`,
+    additionalInfo: input.additionalInfo,
   };
   return {
     id: input.id,

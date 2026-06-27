@@ -2,15 +2,19 @@
 
 This is the Phase 2 production bridge foundation. It runs outside Paperback, polls Kavita as the
 progress source of truth, automatically maps Kavita series to MyAnimeList when confidence is high,
-and queues monotonic MAL progress updates through a SQLite-backed outbox.
+receives normalized Paperback tracker events, and queues monotonic MAL progress updates through a
+SQLite-backed outbox.
 
 It is separate from `apps/mock-progress-bridge`, which remains a diagnostic receiver for Paperback
 read-action feasibility tests.
 
 ## Current Capabilities
 
-- SQLite persistence for mappings, review queue, outbox, and audit logs.
+- SQLite persistence for mappings, review queue, outbox, audit logs, Paperback read events, and
+  per-source policies.
 - Local setup UI for Kavita, MAL OAuth client settings, dry-run mode, and poll interval.
+- `POST /api/progress-events` for events forwarded by Mutsuki Progress Bridge.
+- Source policy controls for MAL enable/disable and optional Kavita mirroring.
 - MAL OAuth callback handling with persisted access/refresh tokens.
 - MAL OAuth disconnect/re-authorize support for stale or incorrect tokens.
 - Token refresh before scheduled/manual sync runs.
@@ -32,7 +36,8 @@ read-action feasibility tests.
 - Scheduled polling with overlap prevention and live poll-interval rescheduling from the setup UI.
 - Configurable MAL title-search cap per sync run, with existing review-queue entries skipped until
   resolved.
-- Local Web/API status, setup, outbox, audit, and unresolved-match views.
+- Local Web/API status, setup, outbox, audit, unresolved-match, source-policy, and Paperback
+  read-event views.
 
 ## Docker
 
@@ -82,6 +87,12 @@ If MAL reports a permanent refresh failure for the stored OAuth token, the bridg
 and asks you to authorize MAL again. Retryable MAL token endpoint failures keep the existing token so
 the next scheduled/manual sync can try again.
 
+To test Paperback tracker events, point the Mutsuki Progress Bridge tracker extension at this same
+base URL. The bridge records those events under **Recent Paperback Read Events**. External sources
+default to `Kavita mirror: disabled`, so reads from sources that are not in Kavita do not create
+Kavita mismatch clutter. The MAL polling path remains Kavita-based until the external read-event
+matching worker is enabled in a later pass.
+
 ## API
 
 - `GET /api/status`
@@ -90,6 +101,10 @@ the next scheduled/manual sync can try again.
 - `GET /api/unresolved-matches`
 - `GET /api/outbox`
 - `GET /api/audit-log`
+- `GET /api/progress-events`
+- `POST /api/progress-events`
+- `GET /api/source-policies`
+- `POST /api/source-policies/:readingSourceId`
 - `POST /api/sync/run`
 - `POST /api/settings`
 - `POST /api/outbox/:outboxId/retry`

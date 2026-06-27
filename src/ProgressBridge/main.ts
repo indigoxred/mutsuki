@@ -32,13 +32,15 @@ type ProgressBridgeImplementation = Extension &
   SettingsFormProviding &
   MangaProgressProviding;
 
-const PROGRESS_BRIDGE_VERSION = "0.1.2";
+const PROGRESS_BRIDGE_VERSION = "0.1.3";
 const PROGRESS_BRIDGE_ICON_URL =
   "https://indigoxred.github.io/mutsuki/ProgressBridge/static/icon.png";
 
 export interface ProgressBridgeEvent {
   version: 1;
+  schemaVersion: 2;
   source: "paperback-progress-provider";
+  eventSource: "paperback-progress-bridge";
   actionId: string;
   occurredAt: string;
   receivedAt: string;
@@ -46,6 +48,15 @@ export interface ProgressBridgeEvent {
   paperbackChapterId: string;
   chapterSourceId: string;
   chapterMangaId: string;
+  readingSourceId: string;
+  readingSourceName: string;
+  readingSourceKind: "kavita" | "external" | "unknown";
+  sourceMangaId: string;
+  sourceChapterId: string;
+  sourceChapterNumber: number;
+  sourceChapterVolume?: number;
+  kavitaSeriesId?: number;
+  kavitaChapterId?: number;
   chapterKind: "manga" | "book";
   chapterNum: number;
   chapterVolume?: number;
@@ -57,6 +68,7 @@ export interface ProgressBridgeEvent {
   role: "read-action" | "diagnostic";
   trackedTitle: string;
   sourceTitle: string;
+  sourceTitleForMatching: string;
 }
 
 export interface ProgressBridgeSettings {
@@ -312,9 +324,13 @@ function progressBridgeEventFromAction(
 ): ProgressBridgeEvent {
   const additionalInfo = action.readChapter?.additionalInfo ?? {};
   const isLastInVolume = additionalInfo.isLastInVolume === "true";
+  const readingSourceId = safeReadingSourceId(action.chapterSourceId);
+  const sourceTitle = action.readChapter?.sourceManga.mangaInfo.primaryTitle ?? "";
   return {
     version: 1,
+    schemaVersion: 2,
     source: "paperback-progress-provider",
+    eventSource: "paperback-progress-bridge",
     actionId: action.id,
     occurredAt: dateToIso(action.creationDate),
     receivedAt: receivedAt.toISOString(),
@@ -322,6 +338,15 @@ function progressBridgeEventFromAction(
     paperbackChapterId: action.chapterId,
     chapterSourceId: action.chapterSourceId,
     chapterMangaId: action.chapterMangaId,
+    readingSourceId,
+    readingSourceName: friendlySourceName(readingSourceId),
+    readingSourceKind: readingSourceKind(readingSourceId, action.chapterId),
+    sourceMangaId: action.chapterMangaId,
+    sourceChapterId: action.chapterId,
+    sourceChapterNumber: action.chapterNum,
+    sourceChapterVolume: action.chapterVolume,
+    kavitaSeriesId: positiveInteger(additionalInfo.kavitaSeriesId),
+    kavitaChapterId: positiveInteger(additionalInfo.kavitaChapterId),
     chapterKind: action.chapterId.startsWith("kavita-book:") ? "book" : "manga",
     chapterNum: action.chapterNum,
     chapterVolume: action.chapterVolume,
@@ -332,14 +357,17 @@ function progressBridgeEventFromAction(
     listingMode: "tracker-bridge",
     role: "read-action",
     trackedTitle: action.sourceManga.mangaInfo.primaryTitle,
-    sourceTitle: action.readChapter?.sourceManga.mangaInfo.primaryTitle ?? "",
+    sourceTitle,
+    sourceTitleForMatching: sourceTitle || action.sourceManga.mangaInfo.primaryTitle,
   };
 }
 
 function diagnosticProgressBridgeEvent(now: string): ProgressBridgeEvent {
   return {
     version: 1,
+    schemaVersion: 2,
     source: "paperback-progress-provider",
+    eventSource: "paperback-progress-bridge",
     actionId: "diagnostic-progress-bridge-settings-test",
     occurredAt: now,
     receivedAt: now,
@@ -347,6 +375,12 @@ function diagnosticProgressBridgeEvent(now: string): ProgressBridgeEvent {
     paperbackChapterId: "diagnostic:progress-bridge-test",
     chapterSourceId: "ProgressBridge",
     chapterMangaId: "diagnostic",
+    readingSourceId: "ProgressBridge",
+    readingSourceName: "ProgressBridge",
+    readingSourceKind: "unknown",
+    sourceMangaId: "diagnostic",
+    sourceChapterId: "diagnostic:progress-bridge-test",
+    sourceChapterNumber: 0,
     chapterKind: "manga",
     chapterNum: 0,
     isLastInVolume: false,
@@ -357,6 +391,7 @@ function diagnosticProgressBridgeEvent(now: string): ProgressBridgeEvent {
     role: "diagnostic",
     trackedTitle: "Diagnostic",
     sourceTitle: "Diagnostic",
+    sourceTitleForMatching: "Diagnostic",
   };
 }
 
@@ -395,6 +430,29 @@ function titleFromReadAction(action: TrackedMangaChapterReadAction): string {
 
 function formatProgressNumber(value: number): string {
   return Number.isInteger(value) ? String(value) : String(value).replace(/\.0+$/u, "");
+}
+
+function safeReadingSourceId(value: string): string {
+  const trimmed = value.trim();
+  return trimmed || "unknown";
+}
+
+function friendlySourceName(sourceId: string): string {
+  return sourceId;
+}
+
+function readingSourceKind(sourceId: string, chapterId: string): "kavita" | "external" | "unknown" {
+  if (/^(?:kavita|mutsuki(?:\s|-)?kavita)$/iu.test(sourceId) || chapterId.startsWith("kavita-")) {
+    return "kavita";
+  }
+  return sourceId === "unknown" ? "unknown" : "external";
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 function slugify(title: string): string {
