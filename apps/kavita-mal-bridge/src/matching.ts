@@ -123,7 +123,7 @@ function scoreCandidate(
   );
 
   if (hasExactTitle(seriesTitles, candidateTitles)) {
-    confidence += 0.66;
+    confidence += 0.86;
     reasons.push("exact-title");
   } else {
     const tokenScore = bestTokenScore(seriesTitles, candidateTitles);
