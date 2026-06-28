@@ -21,6 +21,9 @@ import {
   processExternalReadEvent,
   type ExternalReadEventProcessResult,
 } from "./external-events.js";
+import { createAnilistResolver } from "./resolvers/anilist-resolver.js";
+import { createJikanResolver } from "./resolvers/jikan-resolver.js";
+import { composeTitleResolvers } from "./resolvers/title-resolver.js";
 import type { BridgeTrackingMode } from "./policy.js";
 import {
   assertBridgeSyncReady,
@@ -533,6 +536,7 @@ async function saveSettings(
     "malClientId",
     "malClientSecret",
     "malRedirectUri",
+    "resolverUserAgent",
   ];
   for (const key of allowedStringKeys) {
     const value = body[key];
@@ -541,6 +545,12 @@ async function saveSettings(
   if (typeof body.dryRun === "boolean") await store.saveSetting("dryRun", String(body.dryRun));
   if (typeof body.showKavitaSyncPanels === "boolean") {
     await store.saveSetting("showKavitaSyncPanels", String(body.showKavitaSyncPanels));
+  }
+  if (typeof body.enableJikanResolver === "boolean") {
+    await store.saveSetting("enableJikanResolver", String(body.enableJikanResolver));
+  }
+  if (typeof body.enableAnilistResolver === "boolean") {
+    await store.saveSetting("enableAnilistResolver", String(body.enableAnilistResolver));
   }
   const pollInterval = numberBodyField(body, "pollIntervalSeconds");
   if (pollInterval !== undefined) {
@@ -551,6 +561,27 @@ async function saveSettings(
     await store.saveSetting(
       "maxMalSearchesPerRun",
       String(Math.max(1, Math.min(500, Math.floor(maxMalSearches)))),
+    );
+  }
+  const resolverTimeout = numberBodyField(body, "resolverTimeoutMs");
+  if (resolverTimeout !== undefined) {
+    await store.saveSetting(
+      "resolverTimeoutMs",
+      String(Math.max(1000, Math.min(30_000, Math.floor(resolverTimeout)))),
+    );
+  }
+  const resolverCacheTtl = numberBodyField(body, "resolverCacheTtlHours");
+  if (resolverCacheTtl !== undefined) {
+    await store.saveSetting(
+      "resolverCacheTtlHours",
+      String(Math.max(1, Math.min(24 * 30, Math.floor(resolverCacheTtl)))),
+    );
+  }
+  const resolverMaxCandidates = numberBodyField(body, "resolverMaxCandidatesPerQuery");
+  if (resolverMaxCandidates !== undefined) {
+    await store.saveSetting(
+      "resolverMaxCandidatesPerQuery",
+      String(Math.max(1, Math.min(25, Math.floor(resolverMaxCandidates)))),
     );
   }
 }
@@ -709,6 +740,8 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   const ignored = await options.store.listIgnoredSeries();
   const effectiveDryRun = settingBoolean(settings.dryRun, options.dryRun);
   const showKavitaSyncPanels = settingBoolean(settings.showKavitaSyncPanels, false);
+  const enableJikanResolver = settingBoolean(settings.enableJikanResolver, true);
+  const enableAnilistResolver = settingBoolean(settings.enableAnilistResolver, true);
   const schedule = schedulerStatus(options);
   return `<!doctype html>
 <html lang="en">
@@ -786,6 +819,27 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       </label>
       <label><span class="field-title">MAL redirect URI ${infoIcon("Must exactly match the redirect URI configured in the MAL API client.")}</span>
         <input name="malRedirectUri" value="${escapeHtml(settings.malRedirectUri ?? "")}" autocomplete="off" />
+      </label>
+      <label><span class="field-title">Jikan discovery ${infoIcon("Uses the public Jikan API only to discover MAL candidate IDs when official MAL search misses an English title.")}</span>
+        <select name="enableJikanResolver">
+          <option value="true"${enableJikanResolver ? " selected" : ""}>enabled</option>
+          <option value="false"${!enableJikanResolver ? " selected" : ""}>disabled</option>
+        </select>
+      </label>
+      <label><span class="field-title">AniList discovery ${infoIcon("Uses public AniList GraphQL search to discover MAL IDs through idMal, then validates them with the official MAL API.")}</span>
+        <select name="enableAnilistResolver">
+          <option value="true"${enableAnilistResolver ? " selected" : ""}>enabled</option>
+          <option value="false"${!enableAnilistResolver ? " selected" : ""}>disabled</option>
+        </select>
+      </label>
+      <label><span class="field-title">Resolver timeout ms ${infoIcon("Timeout for discovery helpers. Failed discovery never bypasses deterministic IDs or existing mappings.")}</span>
+        <input name="resolverTimeoutMs" type="number" min="1000" max="30000" step="500" value="${escapeHtml(settings.resolverTimeoutMs ?? "")}" placeholder="5000" />
+      </label>
+      <label><span class="field-title">Resolver cache hours ${infoIcon("How long Jikan/AniList discovery responses stay cached in SQLite to respect public API rate limits.")}</span>
+        <input name="resolverCacheTtlHours" type="number" min="1" max="720" step="1" value="${escapeHtml(settings.resolverCacheTtlHours ?? "")}" placeholder="168" />
+      </label>
+      <label><span class="field-title">Resolver candidate limit ${infoIcon("Maximum discovery candidates per title variant before official MAL direct-ID validation.")}</span>
+        <input name="resolverMaxCandidatesPerQuery" type="number" min="1" max="25" step="1" value="${escapeHtml(settings.resolverMaxCandidatesPerQuery ?? "")}" placeholder="8" />
       </label>
     </div>
     <button type="submit">Save settings</button>
@@ -867,8 +921,13 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       if (!data.malClientSecret) delete data.malClientSecret;
       if (data.pollIntervalSeconds) data.pollIntervalSeconds = Number(data.pollIntervalSeconds);
       if (data.maxMalSearchesPerRun) data.maxMalSearchesPerRun = Number(data.maxMalSearchesPerRun);
+      if (data.resolverTimeoutMs) data.resolverTimeoutMs = Number(data.resolverTimeoutMs);
+      if (data.resolverCacheTtlHours) data.resolverCacheTtlHours = Number(data.resolverCacheTtlHours);
+      if (data.resolverMaxCandidatesPerQuery) data.resolverMaxCandidatesPerQuery = Number(data.resolverMaxCandidatesPerQuery);
       if (data.dryRun) data.dryRun = data.dryRun === "true";
       if (data.showKavitaSyncPanels) data.showKavitaSyncPanels = data.showKavitaSyncPanels === "true";
+      if (data.enableJikanResolver) data.enableJikanResolver = data.enableJikanResolver === "true";
+      if (data.enableAnilistResolver) data.enableAnilistResolver = data.enableAnilistResolver === "true";
       if (data.malEnabled) data.malEnabled = data.malEnabled === "true";
       if (data.malId) data.malId = Number(data.malId);
       if (data.chapterOffset) data.chapterOffset = Number(data.chapterOffset);
@@ -1237,12 +1296,29 @@ function reviewCandidateFromUnknown(item: unknown): ScoredMalCandidate[] {
   const reasons = Array.isArray(record.reasons)
     ? record.reasons.filter((reason): reason is string => typeof reason === "string")
     : [];
+  const provenance = Array.isArray(record.provenance)
+    ? record.provenance.filter((source): source is string => typeof source === "string")
+    : undefined;
+  const strength =
+    record.strength === "strong" || record.strength === "moderate" || record.strength === "weak"
+      ? record.strength
+      : confidence >= 0.7
+        ? "moderate"
+        : "weak";
   return [
     {
       malId,
       title,
       confidence: Number.isFinite(confidence) ? confidence : 0,
       reasons,
+      provenance,
+      reviewPrefill:
+        typeof record.reviewPrefill === "boolean"
+          ? record.reviewPrefill
+          : confidence >= 0.7 ||
+            reasons.includes("exact-title") ||
+            reasons.includes("exact-alt-title"),
+      strength,
       altTitles: Array.isArray(record.altTitles)
         ? record.altTitles.filter((title): title is string => typeof title === "string")
         : undefined,
@@ -1258,7 +1334,7 @@ function reviewCandidateFromUnknown(item: unknown): ScoredMalCandidate[] {
 }
 
 function firstReviewCandidate(candidates: ScoredMalCandidate[]): ScoredMalCandidate | undefined {
-  return candidates[0];
+  return candidates.find((candidate) => candidate.reviewPrefill);
 }
 
 function renderReviewCandidates(candidates: ScoredMalCandidate[]): string {
@@ -1267,7 +1343,17 @@ function renderReviewCandidates(candidates: ScoredMalCandidate[]): string {
     .map((candidate) => {
       const confidence = candidate.confidence.toFixed(2);
       const reasons = candidate.reasons.length > 0 ? ` - ${candidate.reasons.join(", ")}` : "";
-      return `<li><code>${candidate.malId}</code> ${escapeHtml(candidate.title)} (${confidence}${escapeHtml(reasons)})</li>`;
+      const provenance =
+        candidate.provenance && candidate.provenance.length > 0
+          ? `; sources: ${candidate.provenance.join(", ")}`
+          : "";
+      const label =
+        candidate.strength === "weak"
+          ? "Weak suggestion"
+          : candidate.strength === "moderate"
+            ? "Review suggestion"
+            : "Strong suggestion";
+      return `<li><strong>${label}</strong>: <code>${candidate.malId}</code> ${escapeHtml(candidate.title)} (${confidence}${escapeHtml(reasons)}${escapeHtml(provenance)})</li>`;
     })
     .join("")}</ul>`;
 }
@@ -1366,7 +1452,17 @@ async function startFromEnv(): Promise<void> {
       await refreshStoredMalTokenIfNeeded({ baseConfig, store });
       const config = await effectiveBridgeConfig(baseConfig, store);
       const mal = createMalClient(config);
-      return processExternalReadEvent({ store, mal, event, policy });
+      const resolvers = [
+        ...(config.enableJikanResolver ? [createJikanResolver({ config, store })] : []),
+        ...(config.enableAnilistResolver ? [createAnilistResolver({ config, store })] : []),
+      ];
+      return processExternalReadEvent({
+        store,
+        mal,
+        resolver: composeTitleResolvers(resolvers),
+        event,
+        policy,
+      });
     },
     schedulerStatus: () => ({
       intervalMs: scheduler.currentIntervalMs,

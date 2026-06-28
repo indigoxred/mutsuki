@@ -98,6 +98,14 @@ export function createMalClient(config: BridgeConfig): BridgeMalClient {
       return data.flatMap((entry) => malCandidateFromNode(entry.node));
     },
 
+    async getMangaById(malId): Promise<MalSearchCandidate | undefined> {
+      if (!config.malAccessToken) return undefined;
+      if (!Number.isSafeInteger(malId) || malId <= 0) return undefined;
+      const url = `https://api.myanimelist.net/v2/manga/${malId}?fields=alternative_titles,media_type,start_date,num_volumes,num_chapters,authors`;
+      const json = await malJson(config.malAccessToken, url, "GET");
+      return malCandidateFromNode(json)[0];
+    },
+
     async getCurrentProgress(malId): Promise<MalListProgress> {
       if (!config.malAccessToken) {
         return { chaptersRead: 0, volumesRead: 0, status: "plan_to_read" };

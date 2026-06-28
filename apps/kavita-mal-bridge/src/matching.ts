@@ -22,6 +22,7 @@ export interface MalSearchCandidate {
   startYear?: number;
   volumes?: number;
   chapters?: number;
+  provenance?: string[];
 }
 
 export type MatchDecision =
@@ -42,6 +43,8 @@ export type MatchDecision =
 export interface ScoredMalCandidate extends MalSearchCandidate {
   confidence: number;
   reasons: string[];
+  reviewPrefill: boolean;
+  strength: "strong" | "moderate" | "weak";
 }
 
 const AUTO_MATCH_THRESHOLD = 0.92;
@@ -122,12 +125,18 @@ function scoreCandidate(
     normalizeTitleForMatching,
   );
 
-  if (hasExactTitle(seriesTitles, candidateTitles)) {
+  if (hasExactTitle([normalizeTitleForMatching(series.title)], candidateTitles)) {
     confidence += 0.86;
     reasons.push("exact-title");
+  } else if (
+    hasExactTitle((series.altTitles ?? []).map(normalizeTitleForMatching), candidateTitles)
+  ) {
+    confidence += 0.9;
+    reasons.push("exact-alt-title");
   } else {
     const tokenScore = bestTokenScore(seriesTitles, candidateTitles);
-    confidence += tokenScore * 0.55;
+    const meaningfulTokenScore = bestMeaningfulTokenScore(seriesTitles, candidateTitles);
+    confidence += meaningfulTokenScore * 0.55;
     if (tokenScore >= 0.75) reasons.push("similar-title");
   }
 
@@ -157,11 +166,20 @@ function scoreCandidate(
     confidence += 0.06;
     reasons.push("media-type");
   }
+  const provenanceCount = new Set(candidate.provenance ?? []).size;
+  if (provenanceCount >= 2) {
+    confidence += Math.min(0.08, (provenanceCount - 1) * 0.04);
+    reasons.push("resolver-corroboration");
+  }
+
+  const normalizedConfidence = Math.min(1, Number(confidence.toFixed(4)));
 
   return {
     ...candidate,
-    confidence: Math.min(1, Number(confidence.toFixed(4))),
+    confidence: normalizedConfidence,
     reasons,
+    reviewPrefill: shouldPrefillReview(normalizedConfidence, reasons),
+    strength: candidateStrength(normalizedConfidence, reasons),
   };
 }
 
@@ -179,8 +197,39 @@ function bestTokenScore(left: string[], right: string[]): number {
   return best;
 }
 
+function bestMeaningfulTokenScore(left: string[], right: string[]): number {
+  let best = 0;
+  for (const leftTitle of left) {
+    for (const rightTitle of right) {
+      best = Math.max(best, jaccard(meaningfulTokens(leftTitle), meaningfulTokens(rightTitle)));
+    }
+  }
+  return best;
+}
+
 function tokens(title: string): Set<string> {
   return new Set(title.split(" ").filter(Boolean));
+}
+
+function meaningfulTokens(title: string): Set<string> {
+  const generic = new Set([
+    "a",
+    "an",
+    "and",
+    "chapter",
+    "comic",
+    "manga",
+    "man",
+    "novel",
+    "of",
+    "soldier",
+    "story",
+    "the",
+    "to",
+    "vol",
+    "volume",
+  ]);
+  return new Set(title.split(" ").filter((token) => token.length > 1 && !generic.has(token)));
 }
 
 function jaccard(left: Set<string>, right: Set<string>): number {
@@ -210,4 +259,27 @@ function numberFromUnknown(value: string | number | undefined): number | undefin
   if (typeof value !== "string") return undefined;
   const parsed = Number(value.trim());
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function shouldPrefillReview(confidence: number, reasons: string[]): boolean {
+  return (
+    confidence >= 0.7 ||
+    reasons.includes("exact-title") ||
+    reasons.includes("exact-alt-title") ||
+    reasons.includes("deterministic-id")
+  );
+}
+
+function candidateStrength(confidence: number, reasons: string[]): ScoredMalCandidate["strength"] {
+  if (
+    confidence >= AUTO_MATCH_THRESHOLD ||
+    reasons.includes("exact-title") ||
+    reasons.includes("exact-alt-title")
+  ) {
+    return "strong";
+  }
+  if (confidence >= 0.7 || reasons.includes("author") || reasons.includes("year")) {
+    return "moderate";
+  }
+  return "weak";
 }

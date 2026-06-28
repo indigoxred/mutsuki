@@ -112,6 +112,13 @@ External source events can auto-link to MAL when the match is high-confidence, q
 updates through the same outbox, or land in a separate **External Unresolved Matches** review queue
 when the match is ambiguous.
 
+External title matching is not limited to official MAL text search. The bridge forwards safe
+Paperback title metadata, generates title variants, uses deterministic MAL/AniList metadata when
+available, discovers extra candidate MAL IDs through Jikan and public AniList search, then validates
+all discovered IDs through official MAL direct lookup before scoring. Manual MAL ID entry remains a
+last-resort escape hatch for unresolved ambiguity, not the normal workflow. `Chained Soldier`
+resolving to MAL `116880` (`Mato Seihei no Slave`) is covered as a regression fixture.
+
 Use **Preview Kavita progress** on the setup page, or call
 `GET /api/kavita/observed-progress?limit=25`, to verify the bridge can read Kavita's observed
 chapter/volume progress before MAL OAuth is authorized.

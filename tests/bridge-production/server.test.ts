@@ -220,6 +220,148 @@ test("bridge server receives Paperback read events with source identity and defa
   }
 });
 
+test("bridge server parses schema v3 Paperback metadata safely", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/progress-events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schemaVersion: 3,
+        version: 1,
+        source: "paperback-progress-provider",
+        eventSource: "paperback-progress-bridge",
+        actionId: "weebcentral-read-1",
+        occurredAt: "2026-06-26T00:00:00.000Z",
+        receivedAt: "2026-06-26T00:00:01.000Z",
+        mangaId: "bridge-track:chained-soldier",
+        paperbackChapterId: "chapter-1",
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+        readingSourceKind: "external",
+        sourceMangaId: "01J76XYCVRSNNY2C2QH721967B",
+        sourceChapterId: "chapter-1",
+        sourceChapterNumber: 1,
+        sourceTitle: "Chained Soldier",
+        sourcePrimaryTitle: "Chained Soldier",
+        sourceAltTitles: ["Mato Seihei no Slave", "Bearer should-not-leak"],
+        sourceAuthor: "Takahiro",
+        sourceArtist: "Youhei Takemura",
+        sourceShareUrl: "https://weebcentral.example/manga/chained-soldier?apiKey=secret",
+        sourceExternalIds: {
+          mal: "116880",
+          anilist: 141821,
+          token: "secret-token",
+        },
+        sourceOriginalMetadataJson: JSON.stringify({
+          authorization: "Bearer secret-token",
+          safe: "ok",
+        }),
+        chapterKind: "manga",
+        chapterNum: 1,
+      }),
+    });
+    assert.equal(response.status, 202);
+
+    const events = await fetchJson(`http://127.0.0.1:${port}/api/progress-events`);
+    assert.equal(events.events.length, 1);
+    assert.equal(events.events[0].schemaVersion, 3);
+    assert.equal(events.events[0].sourcePrimaryTitle, "Chained Soldier");
+    assert.deepEqual(events.events[0].sourceAltTitles, ["Mato Seihei no Slave", "Bearer redacted"]);
+    assert.equal(events.events[0].sourceAuthor, "Takahiro");
+    assert.equal(events.events[0].sourceArtist, "Youhei Takemura");
+    assert.equal(
+      events.events[0].sourceShareUrl,
+      "https://weebcentral.example/manga/chained-soldier?apiKey=redacted",
+    );
+    assert.equal(events.events[0].sourceExternalIds.mal, "116880");
+    assert.equal(events.events[0].sourceExternalIds.token, undefined);
+    assert.doesNotMatch(JSON.stringify(events), /secret-token|apiKey=secret/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("external unresolved review page does not prefill weak candidates as recommendations", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.enqueueExternalReview({
+    readingSourceId: "WeebCentral",
+    sourceMangaId: "01J76XYCVRSNNY2C2QH721967B",
+    readingSourceName: "WeebCentral",
+    title: "Chained Soldier",
+    reason: "ambiguous-or-low-confidence",
+    candidatesJson: JSON.stringify([
+      {
+        malId: 27757,
+        title: "Sugar*Soldier",
+        confidence: 0.24,
+        reasons: ["media-type"],
+        provenance: ["mal-official-search"],
+        reviewPrefill: false,
+        strength: "weak",
+      },
+    ]),
+  });
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    const api = await fetchJson(`http://127.0.0.1:${port}/api/external-unresolved-matches`);
+
+    assert.match(html, /Weak suggestion/u);
+    assert.match(html, /mal-official-search/u);
+    assert.match(html, /media-type/u);
+    assert.match(html, /placeholder="MAL ID"/u);
+    assert.doesNotMatch(html, /value="27757"/u);
+    assert.equal(api.items[0].candidates[0].reviewPrefill, false);
+    assert.equal(api.items[0].candidates[0].strength, "weak");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge home hides Kavita sync panels by default while keeping external tracking visible", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));

@@ -7,17 +7,25 @@ import {
   type MalListProgress,
 } from "./policy.js";
 import type { BridgeReadEventRecord, SourcePolicyRecord } from "./progress-events.js";
+import {
+  hydrateAndMergeCandidates,
+  titleVariantsFromExternalEvent,
+  type TitleCandidateResolver,
+} from "./resolvers/title-resolver.js";
 import type { ExternalSeriesMappingRecord, SqliteBridgeStore } from "./storage.js";
 import type { BridgeObservedSeries } from "./sync.js";
 
 export interface ExternalReadEventMalClient {
   searchManga(series: BridgeObservedSeries): Promise<MalSearchCandidate[]>;
+  getMangaById?(malId: number): Promise<MalSearchCandidate | undefined>;
   getCurrentProgress(malId: number): Promise<MalListProgress>;
   updateProgress(
     malId: number,
     update: BridgeMalProgressUpdate,
   ): Promise<{ ok: true } | { ok: false; retryable: boolean; message?: string }>;
 }
+
+export type ExternalTitleResolver = TitleCandidateResolver;
 
 export type ExternalReadEventProcessResult =
   | { status: "queued"; malId: number; outboxId: string }
@@ -35,6 +43,7 @@ export type ExternalReadEventProcessResult =
 export async function processExternalReadEvent(input: {
   store: SqliteBridgeStore;
   mal: ExternalReadEventMalClient;
+  resolver?: ExternalTitleResolver;
   event: BridgeReadEventRecord;
   policy: SourcePolicyRecord;
 }): Promise<ExternalReadEventProcessResult> {
@@ -124,14 +133,29 @@ export async function processExternalReadEvent(input: {
 async function createExternalMappingOrReview(input: {
   store: SqliteBridgeStore;
   mal: ExternalReadEventMalClient;
+  resolver?: ExternalTitleResolver;
   event: BridgeReadEventRecord;
 }): Promise<
   { status: "mapped"; mapping: ExternalSeriesMappingRecord } | { status: "review"; reason: string }
 > {
   const series = observedSeriesFromExternalEvent(input.event);
-  const searchCandidates = input.event.sourceTitle.trim()
-    ? await input.mal.searchManga(series)
-    : [];
+  const titleVariants = titleVariantsFromExternalEvent(input.event);
+  const officialCandidates = await searchOfficialCandidates(input.mal, series, titleVariants);
+  const discoveredCandidates =
+    titleVariants.length > 0
+      ? await input.resolver
+          ?.discoverCandidates({
+            event: input.event,
+            series,
+            titleVariants,
+          })
+          .catch(() => [])
+      : [];
+  const searchCandidates = await hydrateAndMergeCandidates({
+    officialCandidates,
+    discoveredCandidates: discoveredCandidates ?? [],
+    hydrator: input.mal,
+  });
   const decision = matchKavitaSeriesToMal({ series, searchCandidates });
   if (decision.status === "review") {
     await input.store.enqueueExternalReview({
@@ -191,6 +215,12 @@ function observedSeriesFromExternalEvent(event: BridgeReadEventRecord): BridgeOb
       externalTargetKey(event.readingSourceId, event.sourceMangaId),
     ),
     title: externalTitle(event),
+    altTitles: event.sourceAltTitles,
+    authors: [event.sourceAuthor, event.sourceArtist].filter((value): value is string =>
+      Boolean(value),
+    ),
+    webLinks: event.sourceShareUrl ? [event.sourceShareUrl] : undefined,
+    externalIds: event.sourceExternalIds,
     contentType: "manga",
     mediaType: "manga",
     completedChapter: event.sourceChapterNumber,
@@ -200,7 +230,40 @@ function observedSeriesFromExternalEvent(event: BridgeReadEventRecord): BridgeOb
 }
 
 function externalTitle(event: BridgeReadEventRecord): string {
-  return event.sourceTitle.trim() || event.sourceMangaId;
+  return (
+    event.sourcePrimaryTitle?.trim() ||
+    event.sourceTitle.trim() ||
+    event.sourceAltTitles?.[0] ||
+    event.sourceMangaId
+  );
+}
+
+async function searchOfficialCandidates(
+  mal: ExternalReadEventMalClient,
+  series: BridgeObservedSeries,
+  titleVariants: string[],
+): Promise<MalSearchCandidate[]> {
+  const variants = titleVariants.length > 0 ? titleVariants : [series.title].filter(Boolean);
+  const candidates: MalSearchCandidate[] = [];
+  const seenTitles = new Set<string>();
+  for (const variant of variants.slice(0, 8)) {
+    const normalized = variant.trim().toLowerCase();
+    if (!normalized || seenTitles.has(normalized)) continue;
+    seenTitles.add(normalized);
+    const results = await mal
+      .searchManga({
+        ...series,
+        title: variant,
+      })
+      .catch(() => []);
+    for (const candidate of results) {
+      candidates.push({
+        ...candidate,
+        provenance: [...new Set([...(candidate.provenance ?? []), "mal-official-search"])],
+      });
+    }
+  }
+  return candidates;
 }
 
 export function externalTargetKey(readingSourceId: string, sourceMangaId: string): string {

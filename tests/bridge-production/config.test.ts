@@ -16,6 +16,11 @@ test("bridge config can start without Kavita or MAL secrets so the setup UI is r
   assert.equal(config.kavitaApiKey, "");
   assert.equal(config.malAccessToken, "");
   assert.equal(config.maxMalSearchesPerRun, 50);
+  assert.equal(config.enableJikanResolver, true);
+  assert.equal(config.enableAnilistResolver, true);
+  assert.equal(config.resolverTimeoutMs, 5000);
+  assert.equal(config.resolverCacheTtlHours, 168);
+  assert.equal(config.resolverMaxCandidatesPerQuery, 8);
 });
 
 test("bridge config includes poll interval and MAL OAuth settings", () => {
@@ -32,4 +37,22 @@ test("bridge config includes poll interval and MAL OAuth settings", () => {
   assert.equal(config.malClientId, "client-id");
   assert.equal(config.malClientSecret, "client-secret");
   assert.equal(config.malRedirectUri, "http://bridge.local/api/mal/oauth/callback");
+});
+
+test("bridge config supports resolver controls", () => {
+  const config = bridgeConfigFromEnv({
+    ENABLE_JIKAN_RESOLVER: "false",
+    ENABLE_ANILIST_RESOLVER: "false",
+    RESOLVER_TIMEOUT_MS: "9000",
+    RESOLVER_CACHE_TTL_HOURS: "24",
+    RESOLVER_MAX_CANDIDATES_PER_QUERY: "12",
+    RESOLVER_USER_AGENT: "Mutsuki Test Agent",
+  });
+
+  assert.equal(config.enableJikanResolver, false);
+  assert.equal(config.enableAnilistResolver, false);
+  assert.equal(config.resolverTimeoutMs, 9000);
+  assert.equal(config.resolverCacheTtlHours, 24);
+  assert.equal(config.resolverMaxCandidatesPerQuery, 12);
+  assert.equal(config.resolverUserAgent, "Mutsuki Test Agent");
 });

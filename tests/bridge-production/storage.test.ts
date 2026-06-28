@@ -83,6 +83,12 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
       readingSourceName: "MangaDex",
       kavitaMirrorMode: "disabled",
     });
+    await store.setResolverCache(
+      "jikan",
+      "chained soldier",
+      [{ malId: 116880, provenance: ["jikan-search"] }],
+      new Date("2030-01-01T00:00:00.000Z"),
+    );
     await store.upsertExternalSeriesMapping({
       readingSourceId: "MangaDex",
       sourceMangaId: "mangadex-title-1",
@@ -159,6 +165,14 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     assert.equal(readEvents[0]?.readingSourceId, "MangaDex");
     assert.equal(readEvents[0]?.readingSourceKind, "external");
     assert.equal(readEvents[0]?.sourceTitle, "External Story");
+    assert.deepEqual(
+      await reopened.getResolverCache("jikan", "chained soldier", new Date("2029-01-01")),
+      [{ malId: 116880, provenance: ["jikan-search"] }],
+    );
+    assert.equal(
+      await reopened.getResolverCache("jikan", "chained soldier", new Date("2031-01-01")),
+      undefined,
+    );
     const policy = await reopened.getSourcePolicy("MangaDex");
     assert.equal(policy?.malEnabled, true);
     assert.equal(policy?.kavitaMirrorMode, "disabled");

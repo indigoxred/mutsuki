@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   processExternalReadEvent,
   type ExternalReadEventMalClient,
+  type ExternalTitleResolver,
 } from "../../apps/kavita-mal-bridge/src/external-events.js";
 import {
   DEFAULT_SOURCE_POLICY,
@@ -70,6 +71,212 @@ test("external Paperback read event auto-links high-confidence MAL match and que
       num_chapters_read: 5,
       status: "reading",
     });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("external Chained Soldier event auto-links through resolver discovery when official MAL search misses it", async () => {
+  const fixture = await createFixture();
+  const searchedTitles: string[] = [];
+  const hydratedIds: number[] = [];
+  const resolverQueries: string[] = [];
+  const mal: ExternalReadEventMalClient = {
+    searchManga: async (series) => {
+      searchedTitles.push(series.title);
+      return [
+        {
+          malId: 27757,
+          title: "Sugar*Soldier",
+          altTitles: ["Hapi★Supi", "シュガー＊ソルジャー"],
+          mediaType: "manga",
+        },
+      ];
+    },
+    getMangaById: async (malId) => {
+      hydratedIds.push(malId);
+      if (malId === 116880) {
+        return {
+          malId: 116880,
+          title: "Mato Seihei no Slave",
+          altTitles: ["Chained Soldier", "魔都精兵のスレイブ", "Mabotai"],
+          mediaType: "manga",
+        };
+      }
+      if (malId === 27757) {
+        return {
+          malId: 27757,
+          title: "Sugar*Soldier",
+          altTitles: ["Hapi★Supi", "シュガー＊ソルジャー"],
+          mediaType: "manga",
+        };
+      }
+      return undefined;
+    },
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => {
+      throw new Error("dry-run processing must not call MAL writes directly");
+    },
+  };
+  const resolver: ExternalTitleResolver = {
+    discoverCandidates: async (input) => {
+      resolverQueries.push(...input.titleVariants);
+      return [
+        {
+          malId: 116880,
+          provenance: ["jikan-search"],
+        },
+      ];
+    },
+  };
+
+  try {
+    const result = await processExternalReadEvent({
+      store: fixture.store,
+      mal,
+      resolver,
+      event: externalEvent({
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+        sourceMangaId: "01J76XYCVRSNNY2C2QH721967B",
+        sourceTitle: "Chained Soldier",
+        sourcePrimaryTitle: "Chained Soldier",
+        sourceChapterNumber: 5,
+      }),
+      policy: {
+        ...DEFAULT_SOURCE_POLICY,
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+      },
+    });
+
+    assert.equal(result.status, "queued");
+    assert.deepEqual(searchedTitles, ["Chained Soldier"]);
+    assert.ok(resolverQueries.includes("Chained Soldier"));
+    assert.ok(hydratedIds.includes(116880));
+    const mappings = await fixture.store.listExternalSeriesMappings();
+    assert.equal(mappings.length, 1);
+    assert.equal(mappings[0]?.malId, 116880);
+    assert.equal(mappings[0]?.matchMethod, "title-search");
+    assert.equal((await fixture.store.listExternalReviews()).length, 0);
+    const outbox = await fixture.store.listOutbox();
+    assert.equal(outbox.length, 1);
+    assert.equal(outbox[0]?.malId, 116880);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("external weak token-only candidates remain unresolved without a prefilled approval id", async () => {
+  const fixture = await createFixture();
+  const mal: ExternalReadEventMalClient = {
+    searchManga: async () => [
+      {
+        malId: 27757,
+        title: "Sugar*Soldier",
+        altTitles: ["Hapi★Supi", "シュガー＊ソルジャー"],
+        mediaType: "manga",
+      },
+    ],
+    getMangaById: async (malId) =>
+      malId === 27757
+        ? {
+            malId: 27757,
+            title: "Sugar*Soldier",
+            altTitles: ["Hapi★Supi", "シュガー＊ソルジャー"],
+            mediaType: "manga",
+          }
+        : undefined,
+    getCurrentProgress: async () => {
+      throw new Error("unresolved events must not fetch MAL progress");
+    },
+    updateProgress: async () => {
+      throw new Error("unresolved events must not write MAL");
+    },
+  };
+
+  try {
+    const result = await processExternalReadEvent({
+      store: fixture.store,
+      mal,
+      resolver: {
+        discoverCandidates: async () => [],
+      },
+      event: externalEvent({
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+        sourceTitle: "Chained Soldier",
+        sourcePrimaryTitle: "Chained Soldier",
+      }),
+      policy: {
+        ...DEFAULT_SOURCE_POLICY,
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+      },
+    });
+
+    assert.equal(result.status, "review");
+    const reviews = await fixture.store.listExternalReviews();
+    assert.equal(reviews.length, 1);
+    const candidates = JSON.parse(reviews[0]?.candidatesJson ?? "[]") as {
+      malId: number;
+      confidence: number;
+      reasons: string[];
+      reviewPrefill: boolean;
+      strength: string;
+    }[];
+    assert.equal(candidates[0]?.malId, 27757);
+    assert.equal(candidates[0]?.reviewPrefill, false);
+    assert.equal(candidates[0]?.strength, "weak");
+    assert.ok(candidates[0]!.confidence < 0.7);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("external alt-title candidate exact match auto-links", async () => {
+  const fixture = await createFixture();
+  const mal: ExternalReadEventMalClient = {
+    searchManga: async () => [
+      {
+        malId: 116880,
+        title: "Mato Seihei no Slave",
+        altTitles: ["Chained Soldier", "魔都精兵のスレイブ"],
+        mediaType: "manga",
+      },
+    ],
+    getMangaById: async () => undefined,
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => {
+      throw new Error("dry-run processing must not call MAL writes directly");
+    },
+  };
+
+  try {
+    const result = await processExternalReadEvent({
+      store: fixture.store,
+      mal,
+      event: externalEvent({
+        sourceTitle: "Chained Soldier",
+        sourcePrimaryTitle: "Chained Soldier",
+      }),
+      policy: {
+        ...DEFAULT_SOURCE_POLICY,
+        readingSourceId: "MangaDex",
+        readingSourceName: "MangaDex",
+      },
+    });
+
+    assert.equal(result.status, "queued");
+    assert.equal((await fixture.store.listExternalSeriesMappings())[0]?.malId, 116880);
   } finally {
     await fixture.cleanup();
   }

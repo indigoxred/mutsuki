@@ -37,7 +37,7 @@ test("progress bridge tracker forwards queued read actions from any source", asy
   assert.deepEqual(result, { successfulItems: ["read-1"], failedItems: [] });
   assert.equal(events.length, 1);
   assert.equal(events[0]?.source, "paperback-progress-provider");
-  assert.equal(events[0]?.schemaVersion, 2);
+  assert.equal(events[0]?.schemaVersion, 3);
   assert.equal(events[0]?.eventSource, "paperback-progress-bridge");
   assert.equal(events[0]?.readingSourceId, "MangaDex");
   assert.equal(events[0]?.readingSourceName, "MangaDex");
@@ -81,6 +81,50 @@ test("progress bridge tracker resolves source titles and fallback chapter labels
   assert.equal(events[0]?.title, "Chapter 12");
   assert.equal(events[0]?.chapterNum, 12);
   assert.equal(events[0]?.chapterVolume, 0);
+});
+
+test("progress bridge tracker forwards safe schema v3 manga metadata", async () => {
+  const events: ProgressBridgeEvent[] = [];
+
+  await processProgressBridgeReadActionQueue({
+    actions: [
+      action({
+        id: "read-1",
+        trackerMangaId: "bridge-track:chained-soldier",
+        chapterSourceId: "WeebCentral",
+        chapterMangaId: "01J76XYCVRSNNY2C2QH721967B",
+        chapterId: "chapter-12",
+        chapterNum: 12,
+        sourceTitle: "Chained Soldier",
+        sourceSecondaryTitles: ["Mato Seihei no Slave", "魔都精兵のスレイブ"],
+        sourceAuthor: "Takahiro",
+        sourceArtist: "Youhei Takemura",
+        sourceShareUrl: "https://weebcentral.example/manga/chained-soldier?apiKey=secret",
+        sourceAdditionalInfo: {
+          anilist: "141821",
+          bearerToken: "secret-token",
+          safeSlug: "chained-soldier",
+        },
+      }),
+    ],
+    sendBridgeEvent: async (event) => {
+      events.push(event);
+    },
+    now: () => new Date("2026-06-25T00:00:00.000Z"),
+  });
+
+  assert.equal(events[0]?.schemaVersion, 3);
+  assert.equal(events[0]?.sourcePrimaryTitle, "Chained Soldier");
+  assert.deepEqual(events[0]?.sourceAltTitles, ["Mato Seihei no Slave", "魔都精兵のスレイブ"]);
+  assert.equal(events[0]?.sourceAuthor, "Takahiro");
+  assert.equal(events[0]?.sourceArtist, "Youhei Takemura");
+  assert.equal(
+    events[0]?.sourceShareUrl,
+    "https://weebcentral.example/manga/chained-soldier?apiKey=redacted",
+  );
+  assert.equal(events[0]?.sourceExternalIds.anilist, "141821");
+  assert.equal(events[0]?.sourceExternalIds.bearerToken, undefined);
+  assert.doesNotMatch(JSON.stringify(events[0]), /secret-token|apiKey=secret/u);
 });
 
 test("progress bridge tracker preserves exact Kavita identifiers when the read source is Kavita", async () => {
@@ -190,11 +234,21 @@ function action(input: {
   chapterNum: number;
   chapterVolume?: number;
   sourceTitle?: string;
+  sourceSecondaryTitles?: string[];
+  sourceAuthor?: string;
+  sourceArtist?: string;
+  sourceShareUrl?: string;
+  sourceAdditionalInfo?: Record<string, string>;
   chapterTitle?: string;
   additionalInfo?: Record<string, string>;
 }): TrackedMangaChapterReadAction {
   const trackerManga = sourceManga(input.trackerMangaId);
   const sourceMangaForChapter = sourceManga(input.chapterMangaId, input.sourceTitle);
+  sourceMangaForChapter.mangaInfo.secondaryTitles = input.sourceSecondaryTitles ?? [];
+  sourceMangaForChapter.mangaInfo.author = input.sourceAuthor;
+  sourceMangaForChapter.mangaInfo.artist = input.sourceArtist;
+  sourceMangaForChapter.mangaInfo.shareUrl = input.sourceShareUrl;
+  sourceMangaForChapter.mangaInfo.additionalInfo = input.sourceAdditionalInfo;
   const readChapter: Chapter = {
     chapterId: input.chapterId,
     sourceManga: sourceMangaForChapter,

@@ -79,7 +79,7 @@ diagnostic events include:
 
 Generic tracker events include:
 
-- `schemaVersion: 2`
+- `schemaVersion: 3`
 - event source: `paperback-progress-bridge`
 - reading source id/name/kind, with external sources such as MangaDex marked `external`
 - Paperback action id
@@ -88,7 +88,8 @@ Generic tracker events include:
 - original `chapterMangaId`
 - original Paperback chapter id
 - chapter and volume numbers seen by Paperback
-- title metadata supplied in the read action
+- title metadata supplied in the read action, including primary title, alternate titles,
+  author/artist, share URL, and sanitized source metadata IDs where Paperback supplies them
 
 The bridge UI prefers human-readable source title and chapter number fields, while retaining the raw
 Paperback chapter id for debugging. Older v1 events are still accepted and normalized during
@@ -116,7 +117,10 @@ Kavita identity exists. It currently includes:
   pre-sync token refresh;
 - deterministic MAL ID/URL matching from existing Kavita external metadata;
 - deterministic AniList ID/link resolution to MAL IDs when Kavita already has AniList metadata;
-- high-confidence fallback search matching;
+- external Paperback candidate discovery from forwarded source metadata, Jikan read-only search,
+  public AniList GraphQL search, and official MAL search across title variants;
+- official MAL direct-ID lookup for every discovered candidate before scoring or writing;
+- high-confidence fallback title and alternate-title matching;
 - unresolved match review, manual approval, manual ignore/restore, and existing-mapping override
   UI/API with persisted Kavita titles on mapping rows;
 - lightweight Kavita readiness checks and MAL OAuth authorization checks without mutating progress;
@@ -140,6 +144,8 @@ Kavita identity exists. It currently includes:
   source events do not clutter Kavita review queues;
 - per-title external ignore state for low-confidence external exceptions that should not sync;
 - external read-event outbox rows that preserve the original Paperback source id and source manga id;
+- resolver cache rows in SQLite so Jikan/AniList discovery responses are reused within the
+  configured TTL and public APIs are not spammed;
 - progress extraction from current Kavita `VolumeDto`/`ChapterDto` fields via
   `/api/Series/volumes?seriesId=...`, including fully read volume/chapter detection, standalone
   EPUB sentinel volume detection, and ignoring special chapters for chapter high-water marks.
@@ -158,6 +164,14 @@ Live validation on 2026-06-26 against the user's Kavita server confirmed:
 The next hardening pass should improve the Web UI around filtering, searching, and bulk-editing
 mappings. External Paperback read events now feed MAL matching/outbox processing without requiring a
 Kavita match. Missing Kavita mappings do not block external-source MAL tracking.
+
+Official MAL text search is not reliable enough as the only candidate-discovery source. The
+regression title `Chained Soldier` can be absent from official text search results even though
+official direct lookup for MAL `116880` returns `Mato Seihei no Slave` with English alternate title
+`Chained Soldier`. The bridge therefore treats Jikan and AniList as discovery aids only, then
+hydrates and validates every discovered ID through the official MAL API before automatic mapping or
+MAL outbox work. Weak candidates based only on shared generic tokens are labelled as weak
+suggestions and are not pre-filled as manual approvals.
 
 Default policies:
 

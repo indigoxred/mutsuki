@@ -27,6 +27,7 @@ export interface BridgeKavitaClient {
 
 export interface BridgeMalClient {
   searchManga(series: BridgeObservedSeries): Promise<MalSearchCandidate[]>;
+  getMangaById?(malId: number): Promise<MalSearchCandidate | undefined>;
   getCurrentProgress(malId: number): Promise<MalListProgress>;
   updateProgress(
     malId: number,

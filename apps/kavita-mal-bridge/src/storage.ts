@@ -211,6 +211,14 @@ export class SqliteBridgeStore implements OutboxStore {
         source_manga_id TEXT NOT NULL,
         source_chapter_id TEXT NOT NULL,
         source_title TEXT NOT NULL,
+        source_primary_title TEXT,
+        source_alt_titles_json TEXT,
+        source_author TEXT,
+        source_artist TEXT,
+        source_share_url TEXT,
+        source_external_ids_json TEXT,
+        source_description TEXT,
+        source_original_metadata_json TEXT,
         source_chapter_number REAL NOT NULL,
         source_chapter_volume REAL,
         kavita_series_id INTEGER,
@@ -218,6 +226,14 @@ export class SqliteBridgeStore implements OutboxStore {
         chapter_kind TEXT NOT NULL,
         raw_event_json TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS resolver_cache (
+        resolver TEXT NOT NULL,
+        cache_key TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (resolver, cache_key)
       );
       CREATE TABLE IF NOT EXISTS source_policies (
         reading_source_id TEXT PRIMARY KEY,
@@ -249,6 +265,14 @@ export class SqliteBridgeStore implements OutboxStore {
     this.addColumnIfMissing("mal_outbox", "target_type", "TEXT");
     this.addColumnIfMissing("mal_outbox", "target_key", "TEXT");
     this.addColumnIfMissing("mal_outbox", "target_title", "TEXT");
+    this.addColumnIfMissing("read_events", "source_primary_title", "TEXT");
+    this.addColumnIfMissing("read_events", "source_alt_titles_json", "TEXT");
+    this.addColumnIfMissing("read_events", "source_author", "TEXT");
+    this.addColumnIfMissing("read_events", "source_artist", "TEXT");
+    this.addColumnIfMissing("read_events", "source_share_url", "TEXT");
+    this.addColumnIfMissing("read_events", "source_external_ids_json", "TEXT");
+    this.addColumnIfMissing("read_events", "source_description", "TEXT");
+    this.addColumnIfMissing("read_events", "source_original_metadata_json", "TEXT");
   }
 
   close(): void {
@@ -589,9 +613,12 @@ export class SqliteBridgeStore implements OutboxStore {
           INSERT INTO read_events (
             schema_version, event_source, reading_source_id, reading_source_name,
             reading_source_kind, action_id, occurred_at, received_at, source_manga_id,
-            source_chapter_id, source_title, source_chapter_number, source_chapter_volume,
+            source_chapter_id, source_title, source_primary_title, source_alt_titles_json,
+            source_author, source_artist, source_share_url, source_external_ids_json,
+            source_description, source_original_metadata_json, source_chapter_number,
+            source_chapter_volume,
             kavita_series_id, kavita_chapter_id, chapter_kind, raw_event_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
@@ -606,6 +633,14 @@ export class SqliteBridgeStore implements OutboxStore {
         record.sourceMangaId,
         record.sourceChapterId,
         record.sourceTitle,
+        record.sourcePrimaryTitle ?? null,
+        record.sourceAltTitles ? JSON.stringify(record.sourceAltTitles) : null,
+        record.sourceAuthor ?? null,
+        record.sourceArtist ?? null,
+        record.sourceShareUrl ?? null,
+        record.sourceExternalIds ? JSON.stringify(record.sourceExternalIds) : null,
+        record.sourceDescription ?? null,
+        record.sourceOriginalMetadataJson ?? null,
         record.sourceChapterNumber,
         record.sourceChapterVolume ?? null,
         record.kavitaSeriesId ?? null,
@@ -613,6 +648,41 @@ export class SqliteBridgeStore implements OutboxStore {
         record.chapterKind,
         record.rawEventJson,
       );
+  }
+
+  async getResolverCache<T>(
+    resolver: string,
+    cacheKey: string,
+    now = new Date(),
+  ): Promise<T | undefined> {
+    const row = this.db
+      .prepare(
+        "SELECT response_json, expires_at FROM resolver_cache WHERE resolver = ? AND cache_key = ?",
+      )
+      .get(resolver, cacheKey) as { response_json: string; expires_at: string } | undefined;
+    if (!row) return undefined;
+    if (Date.parse(row.expires_at) <= now.getTime()) return undefined;
+    return JSON.parse(row.response_json) as T;
+  }
+
+  async setResolverCache(
+    resolver: string,
+    cacheKey: string,
+    response: unknown,
+    expiresAt: Date,
+  ): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO resolver_cache (resolver, cache_key, response_json, expires_at, updated_at)
+          VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(resolver, cache_key) DO UPDATE SET
+            response_json = excluded.response_json,
+            expires_at = excluded.expires_at,
+            updated_at = CURRENT_TIMESTAMP
+        `,
+      )
+      .run(resolver, cacheKey, JSON.stringify(response), expiresAt.toISOString());
   }
 
   async listReadEvents(limit = 100): Promise<BridgeReadEventRecord[]> {
@@ -985,7 +1055,7 @@ interface AuditRow {
 }
 
 interface ReadEventRow {
-  schema_version: 1 | 2;
+  schema_version: 1 | 2 | 3;
   event_source: BridgeReadEventRecord["eventSource"];
   reading_source_id: string;
   reading_source_name: string;
@@ -996,6 +1066,14 @@ interface ReadEventRow {
   source_manga_id: string;
   source_chapter_id: string;
   source_title: string;
+  source_primary_title: string | null;
+  source_alt_titles_json: string | null;
+  source_author: string | null;
+  source_artist: string | null;
+  source_share_url: string | null;
+  source_external_ids_json: string | null;
+  source_description: string | null;
+  source_original_metadata_json: string | null;
   source_chapter_number: number;
   source_chapter_volume: number | null;
   kavita_series_id: number | null;
@@ -1123,6 +1201,14 @@ function readEventFromRow(row: ReadEventRow): BridgeReadEventRecord {
     sourceMangaId: row.source_manga_id,
     sourceChapterId: row.source_chapter_id,
     sourceTitle: row.source_title,
+    sourcePrimaryTitle: row.source_primary_title ?? undefined,
+    sourceAltTitles: parseStringArray(row.source_alt_titles_json),
+    sourceAuthor: row.source_author ?? undefined,
+    sourceArtist: row.source_artist ?? undefined,
+    sourceShareUrl: row.source_share_url ?? undefined,
+    sourceExternalIds: parseExternalIds(row.source_external_ids_json),
+    sourceDescription: row.source_description ?? undefined,
+    sourceOriginalMetadataJson: row.source_original_metadata_json ?? undefined,
     sourceChapterNumber: row.source_chapter_number,
     sourceChapterVolume: row.source_chapter_volume ?? undefined,
     kavitaSeriesId: row.kavita_series_id ?? undefined,
@@ -1130,6 +1216,33 @@ function readEventFromRow(row: ReadEventRow): BridgeReadEventRecord {
     chapterKind: row.chapter_kind,
     rawEventJson: row.raw_event_json,
   };
+}
+
+function parseStringArray(value: string | null): string[] | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseExternalIds(value: string | null): Record<string, string | number> | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    const ids: Record<string, string | number> = {};
+    for (const [key, item] of Object.entries(parsed)) {
+      if (typeof item === "string" || typeof item === "number") ids[key] = item;
+    }
+    return Object.keys(ids).length > 0 ? ids : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function sourcePolicyFromRow(row: SourcePolicyRow): SourcePolicyRecord {

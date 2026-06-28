@@ -59,6 +59,11 @@ MUTSUKI_BRIDGE_DB=/data/mutsuki-bridge.sqlite
 MUTSUKI_BRIDGE_DRY_RUN=true
 MUTSUKI_BRIDGE_POLL_INTERVAL_SECONDS=1800
 MUTSUKI_BRIDGE_MAX_MAL_SEARCHES_PER_RUN=50
+ENABLE_JIKAN_RESOLVER=true
+ENABLE_ANILIST_RESOLVER=true
+RESOLVER_TIMEOUT_MS=5000
+RESOLVER_CACHE_TTL_HOURS=168
+RESOLVER_MAX_CANDIDATES_PER_QUERY=8
 ```
 
 The container can start without Kavita or MAL secrets. Use the Web UI to save credentials after the
@@ -115,6 +120,11 @@ container is reachable.
 - Do not use the existing Paperback `Mutsuki MyAnimeList` tracker for the same MAL titles while the
   bridge is writing to MAL. Pick one writer so progress updates do not race.
 - Low-confidence or conflicting matches stay in the review queue and are not pushed to MAL.
+- Official MAL text search is not the only discovery source. Jikan and AniList may discover MAL IDs
+  for English or alternate titles, but the bridge validates those IDs through official MAL direct
+  lookup before scoring or writing.
+- Weak suggestions are not prefilled as approvals. Manual MAL ID entry is a last resort for true
+  ambiguity.
 - External Paperback source events use a separate mapping/review queue and do not require a Kavita
   match. Disable MAL for a source in **Source Policies** if you only want to observe its read events.
 - Kavita mirroring for external sources defaults to disabled so titles that are not in Kavita do not

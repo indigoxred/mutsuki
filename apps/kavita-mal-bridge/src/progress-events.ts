@@ -5,7 +5,7 @@ export type BridgeReadingSourceKind = "kavita" | "external" | "unknown";
 export type KavitaMirrorMode = "disabled" | "kavita-source-only" | "approved-external-mappings";
 
 export interface BridgeReadEventRecord {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   eventSource: BridgeReadEventSource;
   readingSourceId: string;
   readingSourceName: string;
@@ -16,6 +16,14 @@ export interface BridgeReadEventRecord {
   sourceMangaId: string;
   sourceChapterId: string;
   sourceTitle: string;
+  sourcePrimaryTitle?: string;
+  sourceAltTitles?: string[];
+  sourceAuthor?: string;
+  sourceArtist?: string;
+  sourceShareUrl?: string;
+  sourceExternalIds?: Record<string, string | number>;
+  sourceDescription?: string;
+  sourceOriginalMetadataJson?: string;
   sourceChapterNumber: number;
   sourceChapterVolume?: number;
   kavitaSeriesId?: number;
@@ -69,12 +77,14 @@ export function parseBridgeReadEvent(input: unknown): BridgeReadEventRecord {
   const sourceTitle =
     optionalString(input.sourceTitleForMatching) ??
     optionalString(input.sourceTitle) ??
+    optionalString(input.sourcePrimaryTitle) ??
     optionalString(input.trackedTitle) ??
     optionalString(input.title) ??
     "";
+  const sourcePrimaryTitle = optionalString(input.sourcePrimaryTitle);
 
   return {
-    schemaVersion: input.schemaVersion === 2 ? 2 : 1,
+    schemaVersion: input.schemaVersion === 3 ? 3 : input.schemaVersion === 2 ? 2 : 1,
     eventSource,
     readingSourceId,
     readingSourceName: optionalString(input.readingSourceName) ?? readingSourceId,
@@ -85,6 +95,14 @@ export function parseBridgeReadEvent(input: unknown): BridgeReadEventRecord {
     sourceMangaId,
     sourceChapterId,
     sourceTitle,
+    sourcePrimaryTitle,
+    sourceAltTitles: optionalStringArray(input.sourceAltTitles),
+    sourceAuthor: optionalString(input.sourceAuthor),
+    sourceArtist: optionalString(input.sourceArtist),
+    sourceShareUrl: optionalString(input.sourceShareUrl),
+    sourceExternalIds: optionalExternalIds(input.sourceExternalIds),
+    sourceDescription: optionalString(input.sourceDescription),
+    sourceOriginalMetadataJson: optionalString(input.sourceOriginalMetadataJson),
     sourceChapterNumber,
     sourceChapterVolume:
       optionalFiniteNumber(input.sourceChapterVolume) ?? optionalFiniteNumber(input.chapterVolume),
@@ -161,6 +179,29 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? sanitizeShort(value) : undefined;
 }
 
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const strings = value.flatMap((item) => {
+    const sanitized = optionalString(item);
+    return sanitized ? [sanitized] : [];
+  });
+  return strings.length > 0 ? strings.slice(0, 25) : undefined;
+}
+
+function optionalExternalIds(value: unknown): Record<string, string | number> | undefined {
+  if (!isRecord(value)) return undefined;
+  const ids: Record<string, string | number> = {};
+  for (const [key, item] of Object.entries(value).slice(0, 50)) {
+    if (isSecretKey(key)) continue;
+    if (typeof item === "number" && Number.isFinite(item)) {
+      ids[sanitizeExternalIdKey(key)] = item;
+    } else if (typeof item === "string" && item.trim()) {
+      ids[sanitizeExternalIdKey(key)] = sanitizeShort(item);
+    }
+  }
+  return Object.keys(ids).length > 0 ? ids : undefined;
+}
+
 function optionalPositiveInteger(value: unknown): number | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   const parsed = typeof value === "number" ? value : Number(value);
@@ -185,7 +226,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function sanitizeShort(value: string): string {
   return value
-    .replace(/Bearer\s+\S+/giu, "Bearer redacted")
+    .replace(/Bearer\s+[^&\s"')<>]+/giu, "Bearer redacted")
     .replace(/x-api-key[:=]\s*[^&\s"')<>]+/giu, "x-api-key=redacted")
     .replace(/apiKey=[^&\s"')<>]+/giu, "apiKey=redacted")
     .slice(0, 500);
@@ -198,9 +239,27 @@ function redactEvent(value: Record<string, unknown>): Record<string, unknown> {
       redacted[key] = "redacted";
     } else if (typeof item === "string") {
       redacted[key] = sanitizeShort(item);
+    } else if (Array.isArray(item)) {
+      redacted[key] = item.map((child) =>
+        typeof child === "string"
+          ? sanitizeShort(child)
+          : isRecord(child)
+            ? redactEvent(child)
+            : child,
+      );
+    } else if (isRecord(item)) {
+      redacted[key] = redactEvent(item);
     } else {
       redacted[key] = item;
     }
   }
   return redacted;
+}
+
+function isSecretKey(key: string): boolean {
+  return /token|api.?key|authorization|auth|secret|cookie|session|password/iu.test(key);
+}
+
+function sanitizeExternalIdKey(key: string): string {
+  return key.replace(/[^\w.-]+/gu, "_").slice(0, 80);
 }

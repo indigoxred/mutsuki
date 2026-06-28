@@ -32,13 +32,13 @@ type ProgressBridgeImplementation = Extension &
   SettingsFormProviding &
   MangaProgressProviding;
 
-const PROGRESS_BRIDGE_VERSION = "0.1.4";
+const PROGRESS_BRIDGE_VERSION = "0.1.5";
 const PROGRESS_BRIDGE_ICON_URL =
   "https://indigoxred.github.io/mutsuki/ProgressBridge/static/icon.png";
 
 export interface ProgressBridgeEvent {
   version: 1;
-  schemaVersion: 2;
+  schemaVersion: 3;
   source: "paperback-progress-provider";
   eventSource: "paperback-progress-bridge";
   actionId: string;
@@ -69,6 +69,13 @@ export interface ProgressBridgeEvent {
   trackedTitle: string;
   sourceTitle: string;
   sourceTitleForMatching: string;
+  sourcePrimaryTitle?: string;
+  sourceAltTitles?: string[];
+  sourceAuthor?: string;
+  sourceArtist?: string;
+  sourceShareUrl?: string;
+  sourceExternalIds: Record<string, string | number>;
+  sourceOriginalMetadataJson?: string;
 }
 
 export interface ProgressBridgeSettings {
@@ -325,10 +332,12 @@ function progressBridgeEventFromAction(
   const additionalInfo = action.readChapter?.additionalInfo ?? {};
   const isLastInVolume = additionalInfo.isLastInVolume === "true";
   const readingSourceId = safeReadingSourceId(action.chapterSourceId);
-  const sourceTitle = action.readChapter?.sourceManga.mangaInfo.primaryTitle ?? "";
+  const mangaInfo = action.readChapter?.sourceManga.mangaInfo;
+  const sourceTitle = mangaInfo?.primaryTitle ?? "";
+  const externalIds = safeExternalIds(mangaInfo?.additionalInfo);
   return {
     version: 1,
-    schemaVersion: 2,
+    schemaVersion: 3,
     source: "paperback-progress-provider",
     eventSource: "paperback-progress-bridge",
     actionId: action.id,
@@ -359,13 +368,21 @@ function progressBridgeEventFromAction(
     trackedTitle: action.sourceManga.mangaInfo.primaryTitle,
     sourceTitle,
     sourceTitleForMatching: sourceTitle || action.sourceManga.mangaInfo.primaryTitle,
+    sourcePrimaryTitle: sourceTitle || undefined,
+    sourceAltTitles: safeStringArray(mangaInfo?.secondaryTitles),
+    sourceAuthor: safeShortString(mangaInfo?.author),
+    sourceArtist: safeShortString(mangaInfo?.artist),
+    sourceShareUrl: safeUrlString(mangaInfo?.shareUrl),
+    sourceExternalIds: externalIds,
+    sourceOriginalMetadataJson:
+      Object.keys(externalIds).length > 0 ? safeMetadataJson(mangaInfo?.additionalInfo) : undefined,
   };
 }
 
 function diagnosticProgressBridgeEvent(now: string): ProgressBridgeEvent {
   return {
     version: 1,
-    schemaVersion: 2,
+    schemaVersion: 3,
     source: "paperback-progress-provider",
     eventSource: "paperback-progress-bridge",
     actionId: "diagnostic-progress-bridge-settings-test",
@@ -392,6 +409,7 @@ function diagnosticProgressBridgeEvent(now: string): ProgressBridgeEvent {
     trackedTitle: "Diagnostic",
     sourceTitle: "Diagnostic",
     sourceTitleForMatching: "Diagnostic",
+    sourceExternalIds: {},
   };
 }
 
@@ -466,6 +484,64 @@ function slugify(title: string): string {
 
 function dateToIso(value: Date): string {
   return Number.isFinite(value.getTime()) ? value.toISOString() : new Date(0).toISOString();
+}
+
+function safeStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value.flatMap((item) => {
+    const sanitized = safeShortString(item);
+    return sanitized ? [sanitized] : [];
+  });
+  return values.length > 0 ? values.slice(0, 25) : undefined;
+}
+
+function safeShortString(value: unknown): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  return redactSecretText(value).slice(0, 500);
+}
+
+function safeUrlString(value: unknown): string | undefined {
+  const sanitized = safeShortString(value);
+  if (!sanitized) return undefined;
+  return sanitized.replace(
+    /([?&](?:apiKey|token|access_token|auth|key)=)[^&\s"')<>]+/giu,
+    "$1redacted",
+  );
+}
+
+function safeExternalIds(value: unknown): Record<string, string | number> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+  const ids: Record<string, string | number> = {};
+  for (const [key, item] of Object.entries(value).slice(0, 50)) {
+    if (isSecretKey(key)) continue;
+    if (typeof item === "number" && Number.isFinite(item)) {
+      ids[safeExternalIdKey(key)] = item;
+    } else if (typeof item === "string" && item.trim()) {
+      ids[safeExternalIdKey(key)] = redactSecretText(item).slice(0, 500);
+    }
+  }
+  return ids;
+}
+
+function safeMetadataJson(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  return JSON.stringify(safeExternalIds(value)).slice(0, 4000);
+}
+
+function redactSecretText(value: string): string {
+  return value
+    .replace(/Bearer\s+[^&\s"')<>]+/giu, "Bearer redacted")
+    .replace(/x-api-key[:=]\s*[^&\s"')<>]+/giu, "x-api-key=redacted")
+    .replace(/apiKey=[^&\s"')<>]+/giu, "apiKey=redacted")
+    .replace(/([?&](?:token|access_token|auth|key)=)[^&\s"')<>]+/giu, "$1redacted");
+}
+
+function isSecretKey(key: string): boolean {
+  return /token|api.?key|authorization|auth|secret|cookie|session|password/iu.test(key);
+}
+
+function safeExternalIdKey(key: string): string {
+  return key.replace(/[^\w.-]+/gu, "_").slice(0, 80);
 }
 
 const paperbackProgressBridgeTransport: ProgressBridgeTransport = async (request) => {

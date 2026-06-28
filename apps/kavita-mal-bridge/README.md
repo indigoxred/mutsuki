@@ -17,8 +17,11 @@ SQLite-backed outbox.
 - MAL OAuth callback handling with persisted access/refresh tokens.
 - MAL OAuth disconnect/re-authorize support for stale or incorrect tokens.
 - Token refresh before scheduled/manual sync runs.
-- Deterministic MAL matching from existing Kavita MAL URLs/IDs and AniList IDs/links.
-- Strict high-confidence title matching.
+- Deterministic MAL matching from existing Kavita/source MAL URLs/IDs and AniList IDs/links.
+- Resolver-based candidate discovery through Jikan and AniList, with official MAL direct-ID
+  hydration before scoring or writing.
+- Strict high-confidence title and alternate-title matching. Official MAL text search is still used,
+  but it is not the only discovery source because it can miss English aliases.
 - Review queue and manual approval controls for ambiguous or low-confidence matches, including
   parsed candidate lists with confidence reasons.
 - Manual ignore and restore controls for unresolved series which should not sync to MAL.
@@ -35,6 +38,7 @@ SQLite-backed outbox.
 - Scheduled polling with overlap prevention and live poll-interval rescheduling from the setup UI.
 - Configurable MAL title-search cap per sync run, with existing review-queue entries skipped until
   resolved.
+- Configurable resolver timeout, cache TTL, candidate limits, and Jikan/AniList enable switches.
 - Local Web/API status, setup, outbox, audit, unresolved-match, source-policy, and Paperback
   read-event views.
 
@@ -93,6 +97,19 @@ Kavita mismatch clutter. MAL handling is enabled per source by default; disable 
 Policies** for sources you do not want to track. High-confidence external source events are linked
 and queued through the MAL outbox, while ambiguous titles appear under **External Unresolved
 Matches** for manual approval or ignore.
+
+The matching flow is conservative and automatic-first:
+
+1. Deterministic MAL IDs/URLs from source or Kavita metadata auto-link after validation.
+2. Jikan and AniList discover candidate MAL IDs when official MAL search misses a title.
+3. Every discovered candidate is hydrated through the official MAL API before scoring.
+4. Exact title or alternate-title matches can auto-link when the winner is clearly ahead.
+5. Weak token overlap, such as only sharing the word `Soldier`, stays in review and is labelled as a
+   weak suggestion rather than a recommendation.
+
+`Chained Soldier` / `Mato Seihei no Slave` / MAL `116880` is a regression fixture for this behavior:
+official MAL search may miss the English title, but resolver discovery plus official direct-ID
+hydration can still auto-link it safely.
 
 ## API
 

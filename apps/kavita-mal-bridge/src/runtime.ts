@@ -20,6 +20,30 @@ export async function effectiveBridgeConfig(
     pollIntervalSeconds: settingNumber(settings.pollIntervalSeconds) ?? base.pollIntervalSeconds,
     maxMalSearchesPerRun:
       settingPositiveInteger(settings.maxMalSearchesPerRun) ?? base.maxMalSearchesPerRun,
+    enableJikanResolver: settingBoolean(settings.enableJikanResolver, base.enableJikanResolver),
+    enableAnilistResolver: settingBoolean(
+      settings.enableAnilistResolver,
+      base.enableAnilistResolver,
+    ),
+    resolverTimeoutMs: settingBoundedInteger(
+      settings.resolverTimeoutMs,
+      base.resolverTimeoutMs,
+      1000,
+      30_000,
+    ),
+    resolverCacheTtlHours: settingBoundedInteger(
+      settings.resolverCacheTtlHours,
+      base.resolverCacheTtlHours,
+      1,
+      24 * 30,
+    ),
+    resolverMaxCandidatesPerQuery: settingBoundedInteger(
+      settings.resolverMaxCandidatesPerQuery,
+      base.resolverMaxCandidatesPerQuery,
+      1,
+      25,
+    ),
+    resolverUserAgent: settings.resolverUserAgent ?? base.resolverUserAgent,
   };
 }
 
@@ -116,4 +140,16 @@ function settingPositiveInteger(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 1 ? Math.min(parsed, 500) : undefined;
+}
+
+function settingBoundedInteger(
+  value: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
 }
