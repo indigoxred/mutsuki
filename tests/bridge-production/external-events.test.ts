@@ -386,6 +386,103 @@ test("external weak token-only candidates remain unresolved without a prefilled 
   }
 });
 
+test("forced retry refreshes schema v2 pending reviews through resolver discovery", async () => {
+  const fixture = await createFixture();
+  const discoveredQueries: string[] = [];
+  const hydratedIds: number[] = [];
+  const mal: ExternalReadEventMalClient = {
+    searchManga: async () => [],
+    getMangaById: async (malId) => {
+      hydratedIds.push(malId);
+      return malId === 99819
+        ? {
+            malId: 99819,
+            title: "Ikinokore! Shachiku-chan",
+            mediaType: "manga",
+          }
+        : undefined;
+    },
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => {
+      throw new Error("dry-run processing must not call MAL writes directly");
+    },
+  };
+  const resolver: ExternalTitleResolver = {
+    discoverCandidates: async (input) => {
+      discoveredQueries.push(input.event.sourceMangaId);
+      return [
+        {
+          malId: 99819,
+          provenance: ["mangadex-enrichment", "mangadex-mal-id"],
+        },
+      ];
+    },
+  };
+
+  try {
+    await fixture.store.enqueueExternalReview({
+      readingSourceId: "MangaDex",
+      sourceMangaId: "b52534a4-9206-43c8-96a7-88e9b0f02c50",
+      readingSourceName: "MangaDex",
+      title: "Ikinokore! Shachiku-chan",
+      reason: "no-candidates",
+      candidatesJson: "[]",
+    });
+
+    const withoutForce = await processExternalReadEvent({
+      store: fixture.store,
+      mal,
+      resolver,
+      event: externalEvent({
+        schemaVersion: 2,
+        sourceMangaId: "b52534a4-9206-43c8-96a7-88e9b0f02c50",
+        sourceTitle: "Ikinokore! Shachiku-chan",
+        sourceChapterNumber: 1,
+        sourceChapterVolume: 1,
+      }),
+      policy: {
+        ...DEFAULT_SOURCE_POLICY,
+        readingSourceId: "MangaDex",
+        readingSourceName: "MangaDex",
+      },
+    });
+    assert.equal(withoutForce.status, "skipped");
+    assert.equal(withoutForce.reason, "review-pending");
+    assert.deepEqual(discoveredQueries, []);
+
+    const forced = await processExternalReadEvent({
+      store: fixture.store,
+      mal,
+      resolver,
+      event: externalEvent({
+        schemaVersion: 2,
+        sourceMangaId: "b52534a4-9206-43c8-96a7-88e9b0f02c50",
+        sourceTitle: "Ikinokore! Shachiku-chan",
+        sourceChapterNumber: 1,
+        sourceChapterVolume: 1,
+      }),
+      policy: {
+        ...DEFAULT_SOURCE_POLICY,
+        readingSourceId: "MangaDex",
+        readingSourceName: "MangaDex",
+      },
+      forceRefreshReview: true,
+    });
+
+    assert.equal(forced.status, "queued");
+    assert.deepEqual(discoveredQueries, ["b52534a4-9206-43c8-96a7-88e9b0f02c50"]);
+    assert.deepEqual(hydratedIds, [99819]);
+    assert.equal((await fixture.store.listExternalReviews()).length, 0);
+    assert.equal((await fixture.store.listExternalSeriesMappings())[0]?.malId, 99819);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("external pending review is refreshed by richer schema v3 events and can auto-link", async () => {
   const fixture = await createFixture();
   const mal: ExternalReadEventMalClient = {

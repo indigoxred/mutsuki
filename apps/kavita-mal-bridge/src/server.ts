@@ -67,6 +67,9 @@ export interface KavitaMalBridgeServerOptions {
   processReadEvent?: (
     event: BridgeReadEventRecord,
     policy: SourcePolicyRecord,
+    options?: {
+      forceRefreshReview?: boolean;
+    },
   ) => Promise<ExternalReadEventProcessResult | undefined>;
   schedulerStatus?: () => { intervalMs: number; lastResult?: BridgeSchedulerResult };
   onSettingsSaved?: () => Promise<void> | void;
@@ -136,7 +139,9 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
             sourceChapterId: event.sourceChapterId,
           }),
         });
-        const processing = await processReadEventSafely(options, event, policy);
+        const processing = await processReadEventSafely(options, event, policy, {
+          forceRefreshReview: true,
+        });
         await respondJson(response, { ok: true, event, processing }, 202);
         return;
       }
@@ -597,10 +602,13 @@ async function processReadEventSafely(
   options: KavitaMalBridgeServerOptions,
   event: BridgeReadEventRecord,
   policy: SourcePolicyRecord,
+  processOptions?: {
+    forceRefreshReview?: boolean;
+  },
 ): Promise<ExternalReadEventProcessResult | undefined> {
   if (!options.processReadEvent) return undefined;
   try {
-    return await options.processReadEvent(event, policy);
+    return await options.processReadEvent(event, policy, processOptions);
   } catch (error) {
     await options.store.audit({
       type: "progress",
@@ -1709,7 +1717,7 @@ async function startFromEnv(): Promise<void> {
     dryRun: baseConfig.dryRun,
     runSync,
     processOutbox,
-    processReadEvent: async (event, policy) => {
+    processReadEvent: async (event, policy, processOptions) => {
       await refreshStoredMalTokenIfNeeded({ baseConfig, store });
       const config = await effectiveBridgeConfig(baseConfig, store);
       const mal = createMalClient(config);
@@ -1725,6 +1733,7 @@ async function startFromEnv(): Promise<void> {
         resolver: composeTitleResolvers(resolvers),
         event,
         policy,
+        forceRefreshReview: processOptions?.forceRefreshReview,
       });
     },
     schedulerStatus: () => ({

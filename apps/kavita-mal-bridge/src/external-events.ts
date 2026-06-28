@@ -46,6 +46,7 @@ export async function processExternalReadEvent(input: {
   resolver?: ExternalTitleResolver;
   event: BridgeReadEventRecord;
   policy: SourcePolicyRecord;
+  forceRefreshReview?: boolean;
 }): Promise<ExternalReadEventProcessResult> {
   const { event, policy, store } = input;
   if (event.readingSourceKind !== "external") {
@@ -66,7 +67,7 @@ export async function processExternalReadEvent(input: {
   let mapping = await store.getExternalSeriesMapping(event.readingSourceId, event.sourceMangaId);
   if (!mapping) {
     const pendingReview = await store.getExternalReview(event.readingSourceId, event.sourceMangaId);
-    if (pendingReview && !shouldRefreshPendingExternalReview(event)) {
+    if (pendingReview && !input.forceRefreshReview && !shouldRefreshPendingExternalReview(event)) {
       return { status: "skipped", reason: "review-pending" };
     }
     if (pendingReview) {
