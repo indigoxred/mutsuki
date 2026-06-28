@@ -65,8 +65,16 @@ export async function processExternalReadEvent(input: {
 
   let mapping = await store.getExternalSeriesMapping(event.readingSourceId, event.sourceMangaId);
   if (!mapping) {
-    if (await store.getExternalReview(event.readingSourceId, event.sourceMangaId)) {
+    const pendingReview = await store.getExternalReview(event.readingSourceId, event.sourceMangaId);
+    if (pendingReview && !shouldRefreshPendingExternalReview(event)) {
       return { status: "skipped", reason: "review-pending" };
+    }
+    if (pendingReview) {
+      await store.audit({
+        type: "review",
+        message: `Refreshing pending external source match for ${event.readingSourceName}.`,
+        dataJson: JSON.stringify(eventAuditData(event)),
+      });
     }
     const result = await createExternalMappingOrReview(input);
     if (result.status === "review") return result;
@@ -235,6 +243,18 @@ function externalTitle(event: BridgeReadEventRecord): string {
     event.sourceTitle.trim() ||
     event.sourceAltTitles?.[0] ||
     event.sourceMangaId
+  );
+}
+
+function shouldRefreshPendingExternalReview(event: BridgeReadEventRecord): boolean {
+  return (
+    event.schemaVersion >= 3 ||
+    Boolean(event.sourcePrimaryTitle) ||
+    Boolean(event.sourceAltTitles?.length) ||
+    Boolean(event.sourceAuthor) ||
+    Boolean(event.sourceArtist) ||
+    Boolean(event.sourceShareUrl) ||
+    Boolean(event.sourceExternalIds && Object.keys(event.sourceExternalIds).length > 0)
   );
 }
 

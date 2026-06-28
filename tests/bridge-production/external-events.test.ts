@@ -238,6 +238,93 @@ test("external weak token-only candidates remain unresolved without a prefilled 
   }
 });
 
+test("external pending review is refreshed by richer schema v3 events and can auto-link", async () => {
+  const fixture = await createFixture();
+  const mal: ExternalReadEventMalClient = {
+    searchManga: async () => [
+      {
+        malId: 27757,
+        title: "Sugar*Soldier",
+        mediaType: "manga",
+      },
+    ],
+    getMangaById: async (malId) =>
+      malId === 116880
+        ? {
+            malId: 116880,
+            title: "Mato Seihei no Slave",
+            altTitles: ["Chained Soldier"],
+            mediaType: "manga",
+          }
+        : undefined,
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => {
+      throw new Error("dry-run processing must not call MAL writes directly");
+    },
+  };
+
+  try {
+    const initial = await processExternalReadEvent({
+      store: fixture.store,
+      mal,
+      resolver: {
+        discoverCandidates: async () => [],
+      },
+      event: externalEvent({
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+        sourceMangaId: "01J76XYCVRSNNY2C2QH721967B",
+        sourceTitle: "Chained Soldier",
+        sourcePrimaryTitle: "Chained Soldier",
+      }),
+      policy: {
+        ...DEFAULT_SOURCE_POLICY,
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+      },
+    });
+    assert.equal(initial.status, "review");
+    assert.equal((await fixture.store.listExternalReviews()).length, 1);
+
+    const refreshed = await processExternalReadEvent({
+      store: fixture.store,
+      mal,
+      resolver: {
+        discoverCandidates: async () => [
+          {
+            malId: 116880,
+            provenance: ["jikan-search"],
+          },
+        ],
+      },
+      event: externalEvent({
+        schemaVersion: 3,
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+        sourceMangaId: "01J76XYCVRSNNY2C2QH721967B",
+        sourceTitle: "Chained Soldier",
+        sourcePrimaryTitle: "Chained Soldier",
+        sourceAltTitles: ["Mato Seihei no Slave"],
+      }),
+      policy: {
+        ...DEFAULT_SOURCE_POLICY,
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+      },
+    });
+
+    assert.equal(refreshed.status, "queued");
+    assert.equal((await fixture.store.listExternalReviews()).length, 0);
+    assert.equal((await fixture.store.listExternalSeriesMappings())[0]?.malId, 116880);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("external alt-title candidate exact match auto-links", async () => {
   const fixture = await createFixture();
   const mal: ExternalReadEventMalClient = {
