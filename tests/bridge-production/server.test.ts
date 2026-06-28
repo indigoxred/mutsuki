@@ -126,7 +126,8 @@ test("bridge server exposes outbox status and recent items", async () => {
     assert.equal(outbox.items.length, 1);
     assert.equal(outbox.items[0].kavitaSeriesId, 99);
     assert.equal(outbox.items[0].update.num_chapters_read, 8);
-    assert.match(html, /Recent MAL Outbox/u);
+    assert.match(html, /MAL Outbox/u);
+    assert.match(html, /Current mode: <strong>preview only<\/strong>/u);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();
@@ -348,13 +349,74 @@ test("external unresolved review page does not prefill weak candidates as recomm
     const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
     const api = await fetchJson(`http://127.0.0.1:${port}/api/external-unresolved-matches`);
 
-    assert.match(html, /Weak suggestion/u);
-    assert.match(html, /mal-official-search/u);
-    assert.match(html, /media-type/u);
+    assert.match(html, /No safe MAL recommendation/u);
+    assert.match(html, /Show weak search noise/u);
     assert.match(html, /placeholder="MAL ID"/u);
     assert.doesNotMatch(html, /value="27757"/u);
     assert.equal(api.items[0].candidates[0].reviewPrefill, false);
     assert.equal(api.items[0].candidates[0].strength, "weak");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("external unresolved review page hides weak-only official search noise by default", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.enqueueExternalReview({
+    readingSourceId: "WeebCentral",
+    sourceMangaId: "04D66VAMY7PGK8HVKY3CCGTS",
+    readingSourceName: "WeebCentral",
+    title: "Ookii Muki Muki Chiisai Muchi Muchi",
+    reason: "ambiguous-or-low-confidence",
+    candidatesJson: JSON.stringify([
+      {
+        malId: 157541,
+        title: "Chiisai Boku no Haru",
+        confidence: 0.14,
+        reasons: ["media-type"],
+        provenance: ["mal-official-search"],
+        reviewPrefill: false,
+        strength: "weak",
+      },
+      {
+        malId: 126161,
+        title: "Uchi no Kaisha no Chiisai Senpai no Hanashi",
+        confidence: 0.12,
+        reasons: ["media-type"],
+        provenance: ["mal-official-search"],
+        reviewPrefill: false,
+        strength: "weak",
+      },
+    ]),
+  });
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+
+    assert.match(html, /No safe MAL recommendation/u);
+    assert.match(html, /Show weak search noise/u);
+    assert.doesNotMatch(html, /value="157541"/u);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();

@@ -32,7 +32,7 @@ type ProgressBridgeImplementation = Extension &
   SettingsFormProviding &
   MangaProgressProviding;
 
-const PROGRESS_BRIDGE_VERSION = "0.1.5";
+const PROGRESS_BRIDGE_VERSION = "0.1.6";
 const PROGRESS_BRIDGE_ICON_URL =
   "https://indigoxred.github.io/mutsuki/ProgressBridge/static/icon.png";
 
@@ -74,6 +74,7 @@ export interface ProgressBridgeEvent {
   sourceAuthor?: string;
   sourceArtist?: string;
   sourceShareUrl?: string;
+  sourceThumbnailUrl?: string;
   sourceExternalIds: Record<string, string | number>;
   sourceOriginalMetadataJson?: string;
 }
@@ -373,6 +374,7 @@ function progressBridgeEventFromAction(
     sourceAuthor: safeShortString(mangaInfo?.author),
     sourceArtist: safeShortString(mangaInfo?.artist),
     sourceShareUrl: safeUrlString(mangaInfo?.shareUrl),
+    sourceThumbnailUrl: safeUrlString(mangaInfo?.thumbnailUrl),
     sourceExternalIds: externalIds,
     sourceOriginalMetadataJson:
       Object.keys(externalIds).length > 0 ? safeMetadataJson(mangaInfo?.additionalInfo) : undefined,

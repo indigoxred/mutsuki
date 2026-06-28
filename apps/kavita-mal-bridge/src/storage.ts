@@ -216,6 +216,7 @@ export class SqliteBridgeStore implements OutboxStore {
         source_author TEXT,
         source_artist TEXT,
         source_share_url TEXT,
+        source_thumbnail_url TEXT,
         source_external_ids_json TEXT,
         source_description TEXT,
         source_original_metadata_json TEXT,
@@ -270,6 +271,7 @@ export class SqliteBridgeStore implements OutboxStore {
     this.addColumnIfMissing("read_events", "source_author", "TEXT");
     this.addColumnIfMissing("read_events", "source_artist", "TEXT");
     this.addColumnIfMissing("read_events", "source_share_url", "TEXT");
+    this.addColumnIfMissing("read_events", "source_thumbnail_url", "TEXT");
     this.addColumnIfMissing("read_events", "source_external_ids_json", "TEXT");
     this.addColumnIfMissing("read_events", "source_description", "TEXT");
     this.addColumnIfMissing("read_events", "source_original_metadata_json", "TEXT");
@@ -614,11 +616,12 @@ export class SqliteBridgeStore implements OutboxStore {
             schema_version, event_source, reading_source_id, reading_source_name,
             reading_source_kind, action_id, occurred_at, received_at, source_manga_id,
             source_chapter_id, source_title, source_primary_title, source_alt_titles_json,
-            source_author, source_artist, source_share_url, source_external_ids_json,
+            source_author, source_artist, source_share_url, source_thumbnail_url,
+            source_external_ids_json,
             source_description, source_original_metadata_json, source_chapter_number,
             source_chapter_volume,
             kavita_series_id, kavita_chapter_id, chapter_kind, raw_event_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
@@ -638,6 +641,7 @@ export class SqliteBridgeStore implements OutboxStore {
         record.sourceAuthor ?? null,
         record.sourceArtist ?? null,
         record.sourceShareUrl ?? null,
+        record.sourceThumbnailUrl ?? null,
         record.sourceExternalIds ? JSON.stringify(record.sourceExternalIds) : null,
         record.sourceDescription ?? null,
         record.sourceOriginalMetadataJson ?? null,
@@ -1071,6 +1075,7 @@ interface ReadEventRow {
   source_author: string | null;
   source_artist: string | null;
   source_share_url: string | null;
+  source_thumbnail_url: string | null;
   source_external_ids_json: string | null;
   source_description: string | null;
   source_original_metadata_json: string | null;
@@ -1206,6 +1211,7 @@ function readEventFromRow(row: ReadEventRow): BridgeReadEventRecord {
     sourceAuthor: row.source_author ?? undefined,
     sourceArtist: row.source_artist ?? undefined,
     sourceShareUrl: row.source_share_url ?? undefined,
+    sourceThumbnailUrl: row.source_thumbnail_url ?? undefined,
     sourceExternalIds: parseExternalIds(row.source_external_ids_json),
     sourceDescription: row.source_description ?? undefined,
     sourceOriginalMetadataJson: row.source_original_metadata_json ?? undefined,

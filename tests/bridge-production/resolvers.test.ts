@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { bridgeConfigFromEnv } from "../../apps/kavita-mal-bridge/src/config.js";
 import { createJikanResolver } from "../../apps/kavita-mal-bridge/src/resolvers/jikan-resolver.js";
+import { titleVariantsFromExternalEvent } from "../../apps/kavita-mal-bridge/src/resolvers/title-resolver.js";
 import { SqliteBridgeStore } from "../../apps/kavita-mal-bridge/src/storage.js";
 
 test("Jikan resolver caches candidate discovery by normalized query", async () => {
@@ -69,4 +70,28 @@ test("Jikan resolver caches candidate discovery by normalized query", async () =
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("title variants include safe thumbnail URL slugs without image extensions", () => {
+  const variants = titleVariantsFromExternalEvent({
+    schemaVersion: 3,
+    eventSource: "paperback-progress-bridge",
+    readingSourceId: "WeebCentral",
+    readingSourceName: "WeebCentral",
+    readingSourceKind: "external",
+    actionId: "read-1",
+    occurredAt: "2026-06-28T00:00:00.000Z",
+    receivedAt: "2026-06-28T00:00:01.000Z",
+    sourceMangaId: "04D66VAMY7PGK8HVKY3CCGTS",
+    sourceChapterId: "chapter-1",
+    sourceTitle: "Ookii Muki Muki Chiisai Muchi Muchi",
+    sourceThumbnailUrl:
+      "https://imgs-2.2xstorage.com/thumb/ookii-onnanoko-wa-daisuki-desu-ka.webp?apiKey=redacted",
+    sourceChapterNumber: 1,
+    chapterKind: "manga",
+    rawEventJson: "{}",
+  });
+
+  assert.ok(variants.includes("ookii onnanoko wa daisuki desu ka"));
+  assert.ok(!variants.some((variant) => variant.includes(".webp")));
 });

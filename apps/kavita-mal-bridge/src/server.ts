@@ -772,17 +772,17 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
 </head>
 <body>
   <h1>Mutsuki Kavita MAL Bridge</h1>
-  <p class="muted">Mode: <strong>${effectiveDryRun ? "dry-run" : "live MAL writes"}</strong> - MAL: <strong>${tokens ? "authorized" : "not authorized"}</strong>${schedule ? ` - Poll: <strong>${schedule.intervalSeconds}s</strong>` : ""}</p>
+  <p class="muted">MAL write mode: <strong>${effectiveDryRun ? "Preview only (dry run)" : "Send to MAL (live writes)"}</strong> - MAL: <strong>${tokens ? "authorized" : "not authorized"}</strong>${schedule ? ` - Poll: <strong>${schedule.intervalSeconds}s</strong>` : ""}</p>
   <section class="panel quick-guide">
     <div class="section-head">
       <h2>Quick guide</h2>
-      ${infoIcon("The normal flow is Paperback read event -> bridge matching -> MAL outbox. Kavita sync panels are optional and hidden until enabled.")}
+      ${infoIcon("The normal flow is Paperback read event -> bridge matching -> MAL outbox -> preview or send to MAL depending on write mode. Kavita sync panels are optional and hidden until enabled.")}
     </div>
-    <p class="muted">Start here: confirm read events arrive, check unresolved external matches, then review the MAL outbox before turning off dry-run.</p>
+    <p class="muted">Start here: confirm read events arrive, check unresolved external matches, then review the MAL outbox. Change MAL write mode to Send to MAL only when the pending outbox looks correct.</p>
   </section>
   <div class="section-head">
     <h2>Setup</h2>
-    ${infoIcon("Connect Kavita and MAL, choose dry-run/live mode, and decide whether advanced Kavita sync tables are shown.")}
+    ${infoIcon("Connect MAL, choose whether pending outbox updates are previews or live writes, and decide whether advanced Kavita sync tables are shown.")}
   </div>
   <form class="panel" id="settings-form" data-endpoint="/api/settings">
     <div class="row">
@@ -798,11 +798,12 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       <label><span class="field-title">Max MAL searches per run ${infoIcon("Safety limit for fuzzy MAL searches. Deterministic IDs still link without using this search budget.")}</span>
         <input name="maxMalSearchesPerRun" type="number" min="1" max="500" step="1" value="${escapeHtml(settings.maxMalSearchesPerRun ?? "")}" />
       </label>
-      <label><span class="field-title">Dry run ${infoIcon("When true, the bridge previews MAL writes instead of changing your MAL account.")}</span>
+      <label><span class="field-title">MAL write mode ${infoIcon("Preview only stores pending outbox work without changing MAL. Send to MAL lets the outbox processor write monotonic progress to MAL.")}</span>
         <select name="dryRun">
-          <option value="true"${effectiveDryRun ? " selected" : ""}>true</option>
-          <option value="false"${!effectiveDryRun ? " selected" : ""}>false</option>
+          <option value="true"${effectiveDryRun ? " selected" : ""}>Preview only (dry run)</option>
+          <option value="false"${!effectiveDryRun ? " selected" : ""}>Send to MAL (live writes)</option>
         </select>
+        <span class="help">Saving this setting does not send old pending outbox items by itself. Use the run button below, or wait for the scheduled poll.</span>
       </label>
       <label><span class="field-title">Show Kavita sync panels ${infoIcon("Shows the long Kavita mapping and review tables. Keep this off when you are mainly testing Paperback read events from source extensions.")}</span>
         <select name="showKavitaSyncPanels">
@@ -845,7 +846,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <button type="submit">Save settings</button>
     <a class="button" href="/api/mal/oauth/start">Connect MAL</a>
     <button type="button" id="disconnect-mal">Disconnect MAL</button>
-    <button type="button" id="run-sync">Run bridge sync now</button>
+    <button type="button" id="run-sync">Run Kavita sync and process MAL outbox now</button>
     <button type="button" id="check-readiness">Check readiness</button>
     <button type="button" id="preview-kavita">Preview Kavita progress</button>
     <p class="muted" id="form-status"></p>
@@ -895,10 +896,10 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <tbody>${externalIgnored.map(renderExternalIgnoredRow).join("")}</tbody>
   </table>
   <div class="section-head">
-    <h2>Recent MAL Outbox</h2>
-    ${infoIcon("Queued or recently processed MAL writes. In dry-run mode these are previews, not live MAL changes.")}
+    <h2>MAL Outbox</h2>
+    ${infoIcon("Pending MAL updates are written only when this outbox is processed. In Preview only mode, processing records a preview and does not change MAL. In Send to MAL mode, processing writes to MAL.")}
   </div>
-  <p>${outboxCounts.pending} pending, ${outboxCounts.succeeded} succeeded, ${outboxCounts.failed} failed.</p>
+  <p>${outboxCounts.pending} pending, ${outboxCounts.succeeded} succeeded, ${outboxCounts.failed} failed. Current mode: <strong>${effectiveDryRun ? "preview only" : "send to MAL"}</strong>.</p>
   <table>
     <thead><tr><th>Created</th><th>Status</th><th>Target</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
     <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
@@ -1339,6 +1340,24 @@ function firstReviewCandidate(candidates: ScoredMalCandidate[]): ScoredMalCandid
 
 function renderReviewCandidates(candidates: ScoredMalCandidate[]): string {
   if (candidates.length === 0) return `<p class="muted">No MAL candidates found.</p>`;
+  const actionable = candidates.filter(
+    (candidate) => candidate.strength !== "weak" || candidate.reviewPrefill,
+  );
+  const weak = candidates.filter(
+    (candidate) => candidate.strength === "weak" && !candidate.reviewPrefill,
+  );
+  const safeCandidates =
+    actionable.length > 0
+      ? renderCandidateList(actionable)
+      : `<p class="muted">No safe MAL recommendation. Enter a MAL ID manually only after checking MAL yourself.</p>`;
+  const weakDetails =
+    weak.length > 0
+      ? `<details class="muted"><summary>Show weak search noise</summary>${renderCandidateList(weak)}</details>`
+      : "";
+  return `${safeCandidates}${weakDetails}`;
+}
+
+function renderCandidateList(candidates: ScoredMalCandidate[]): string {
   return `<ul class="muted">${candidates
     .map((candidate) => {
       const confidence = candidate.confidence.toFixed(2);

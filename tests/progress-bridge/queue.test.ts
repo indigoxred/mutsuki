@@ -100,6 +100,8 @@ test("progress bridge tracker forwards safe schema v3 manga metadata", async () 
         sourceAuthor: "Takahiro",
         sourceArtist: "Youhei Takemura",
         sourceShareUrl: "https://weebcentral.example/manga/chained-soldier?apiKey=secret",
+        sourceThumbnailUrl:
+          "https://imgs-2.2xstorage.com/thumb/ookii-onnanoko-wa-daisuki-desu-ka.webp?apiKey=secret",
         sourceAdditionalInfo: {
           anilist: "141821",
           bearerToken: "secret-token",
@@ -121,6 +123,10 @@ test("progress bridge tracker forwards safe schema v3 manga metadata", async () 
   assert.equal(
     events[0]?.sourceShareUrl,
     "https://weebcentral.example/manga/chained-soldier?apiKey=redacted",
+  );
+  assert.equal(
+    events[0]?.sourceThumbnailUrl,
+    "https://imgs-2.2xstorage.com/thumb/ookii-onnanoko-wa-daisuki-desu-ka.webp?apiKey=redacted",
   );
   assert.equal(events[0]?.sourceExternalIds.anilist, "141821");
   assert.equal(events[0]?.sourceExternalIds.bearerToken, undefined);
@@ -238,6 +244,7 @@ function action(input: {
   sourceAuthor?: string;
   sourceArtist?: string;
   sourceShareUrl?: string;
+  sourceThumbnailUrl?: string;
   sourceAdditionalInfo?: Record<string, string>;
   chapterTitle?: string;
   additionalInfo?: Record<string, string>;
@@ -248,6 +255,7 @@ function action(input: {
   sourceMangaForChapter.mangaInfo.author = input.sourceAuthor;
   sourceMangaForChapter.mangaInfo.artist = input.sourceArtist;
   sourceMangaForChapter.mangaInfo.shareUrl = input.sourceShareUrl;
+  sourceMangaForChapter.mangaInfo.thumbnailUrl = input.sourceThumbnailUrl ?? "";
   sourceMangaForChapter.mangaInfo.additionalInfo = input.sourceAdditionalInfo;
   const readChapter: Chapter = {
     chapterId: input.chapterId,

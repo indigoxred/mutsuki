@@ -53,6 +53,7 @@ export function titleVariantsFromExternalEvent(event: BridgeReadEventRecord): st
   add(event.sourcePrimaryTitle);
   for (const title of event.sourceAltTitles ?? []) add(title);
   add(slugTitleFromUrl(event.sourceShareUrl));
+  add(slugTitleFromUrl(event.sourceThumbnailUrl));
 
   return [...values].slice(0, 20);
 }
@@ -121,7 +122,9 @@ function slugTitleFromUrl(value: string | undefined): string | undefined {
   const path = value.split(/[?#]/u)[0] ?? "";
   const segment = path.split("/").filter(Boolean).at(-1);
   if (!segment) return undefined;
-  return decodeURIComponentSafe(segment).replace(/[-_]+/gu, " ");
+  return decodeURIComponentSafe(segment)
+    .replace(/\.(?:avif|gif|jpe?g|png|webp|html?)$/iu, "")
+    .replace(/[-_]+/gu, " ");
 }
 
 function decodeURIComponentSafe(value: string): string {

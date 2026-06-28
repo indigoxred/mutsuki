@@ -21,6 +21,7 @@ export interface BridgeReadEventRecord {
   sourceAuthor?: string;
   sourceArtist?: string;
   sourceShareUrl?: string;
+  sourceThumbnailUrl?: string;
   sourceExternalIds?: Record<string, string | number>;
   sourceDescription?: string;
   sourceOriginalMetadataJson?: string;
@@ -100,6 +101,7 @@ export function parseBridgeReadEvent(input: unknown): BridgeReadEventRecord {
     sourceAuthor: optionalString(input.sourceAuthor),
     sourceArtist: optionalString(input.sourceArtist),
     sourceShareUrl: optionalString(input.sourceShareUrl),
+    sourceThumbnailUrl: optionalString(input.sourceThumbnailUrl),
     sourceExternalIds: optionalExternalIds(input.sourceExternalIds),
     sourceDescription: optionalString(input.sourceDescription),
     sourceOriginalMetadataJson: optionalString(input.sourceOriginalMetadataJson),
