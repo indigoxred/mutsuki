@@ -177,6 +177,72 @@ test("bridge server exposes outbox status and recent items", async () => {
   }
 });
 
+test("bridge home separates active MAL outbox work from successful send history", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await enqueueMalUpdate(store, {
+    kavitaSeriesId: 10,
+    malId: 111,
+    update: { num_chapters_read: 3 },
+    reason: "pending-update",
+  });
+  const succeeded = await enqueueMalUpdate(store, {
+    kavitaSeriesId: 20,
+    malId: 222,
+    update: { num_chapters_read: 9 },
+    reason: "completed-update",
+  });
+  await store.update({
+    ...succeeded,
+    status: "succeeded",
+    attempts: 1,
+    updatedAt: "2026-06-28T00:00:00.000Z",
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const outbox = await fetchJson(`http://127.0.0.1:${port}/api/outbox`);
+    const history = await fetchJson(`http://127.0.0.1:${port}/api/outbox/history`);
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    const activeSection = html.slice(
+      html.indexOf("Active MAL Outbox"),
+      html.indexOf("MAL Send History"),
+    );
+    const historySection = html.slice(html.indexOf("MAL Send History"));
+
+    assert.equal(outbox.items.length, 1);
+    assert.equal(outbox.items[0]?.malId, 111);
+    assert.equal(history.items.length, 1);
+    assert.equal(history.items[0]?.malId, 222);
+    assert.match(activeSection, /111/u);
+    assert.doesNotMatch(activeSection, /222/u);
+    assert.match(historySection, /222/u);
+    assert.match(html, /Successful sends stay in history for dedupe and audit/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge server processes the MAL outbox without running Kavita sync", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
@@ -308,6 +374,72 @@ test("bridge server receives Paperback read events with source identity and defa
       html.indexOf("Recent Paperback Read Events") < html.indexOf("External Source Mappings"),
       "recent read events should be visible before mapping tables",
     );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server auto-onboards a newly observed Paperback source", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/progress-events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schemaVersion: 3,
+        eventSource: "paperback-progress-bridge",
+        actionId: "new-source-read-1",
+        occurredAt: "2026-06-28T00:00:00.000Z",
+        receivedAt: "2026-06-28T00:00:01.000Z",
+        readingSourceId: "FreshSource",
+        readingSourceName: "Fresh Source",
+        readingSourceKind: "external",
+        sourceMangaId: "fresh-title-1",
+        sourceChapterId: "chapter-1",
+        sourceChapterNumber: 1,
+        sourceTitle: "Fresh Story",
+        chapterKind: "manga",
+      }),
+    });
+    const policies = await fetchJson(`http://127.0.0.1:${port}/api/source-policies`);
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+
+    assert.equal(response.status, 202);
+    assert.equal(policies.items.length, 1);
+    assert.equal(policies.items[0].readingSourceId, "FreshSource");
+    assert.equal(policies.items[0].malEnabled, true);
+    assert.equal(policies.items[0].kavitaMirrorMode, "disabled");
+    assert.match(html, /Fresh Source/u);
+    assert.match(
+      html,
+      /New Paperback sources appear here automatically after their first read event/u,
+    );
+    assert.match(html, /Default for new external sources: MAL tracking on, Kavita mirror off/u);
+    assert.match(html, /Recent Activity Feed/u);
+    assert.match(html, /Received/u);
+    assert.match(html, /Fresh Story/u);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();
@@ -730,6 +862,7 @@ test("bridge home hides Kavita sync panels by default while keeping external tra
     assert.match(html, /Visible External Mapping/u);
     assert.match(html, /External Source Mappings/u);
     assert.match(html, /class="info-icon halo-info"/u);
+    assert.match(html, /class="info-glyph" aria-hidden="true">\?/u);
     assert.match(html, /MAL updates send automatically for new read events/u);
     assert.doesNotMatch(html, /name="kavitaBaseUrl"/u);
     assert.doesNotMatch(html, /name="kavitaApiKey"/u);

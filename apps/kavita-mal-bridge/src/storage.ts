@@ -1090,7 +1090,25 @@ export class SqliteBridgeStore implements OutboxStore {
     ).map(outboxFromRow);
   }
 
-  async listOutbox(limit = 100): Promise<BridgeOutboxItem[]> {
+  async listOutbox(
+    limit = 100,
+    statuses?: BridgeOutboxItem["status"][],
+  ): Promise<BridgeOutboxItem[]> {
+    if (statuses?.length) {
+      const allowed = statuses.filter(
+        (status): status is BridgeOutboxItem["status"] =>
+          status === "pending" || status === "failed" || status === "succeeded",
+      );
+      if (!allowed.length) return [];
+      const placeholders = allowed.map(() => "?").join(", ");
+      return (
+        this.db
+          .prepare(
+            `SELECT * FROM mal_outbox WHERE status IN (${placeholders}) ORDER BY created_at DESC LIMIT ?`,
+          )
+          .all(...allowed, limit) as unknown as OutboxRow[]
+      ).map(outboxFromRow);
+    }
     return (
       this.db
         .prepare("SELECT * FROM mal_outbox ORDER BY created_at DESC LIMIT ?")

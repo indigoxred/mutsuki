@@ -174,7 +174,13 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/outbox") {
-        await respondJson(response, { items: await options.store.listOutbox(100) });
+        await respondJson(response, {
+          items: await options.store.listOutbox(100, ["pending", "failed"]),
+        });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/outbox/history") {
+        await respondJson(response, { items: await options.store.listOutbox(100, ["succeeded"]) });
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/outbox/process") {
@@ -871,7 +877,8 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     audit,
     settings,
     tokens,
-    outboxItems,
+    activeOutboxItems,
+    outboxHistoryItems,
     outboxCounts,
     readEvents,
     sourcePolicies,
@@ -885,7 +892,8 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     options.store.listAuditLogs(20),
     options.store.listSettings(),
     options.store.getOAuthTokens(),
-    options.store.listOutbox(25),
+    options.store.listOutbox(25, ["pending", "failed"]),
+    options.store.listOutbox(25, ["succeeded"]),
     options.store.outboxCounts(),
     options.store.listReadEvents(25),
     options.store.listSourcePolicies(),
@@ -1001,47 +1009,75 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     .table-wrap { overflow-x: auto; }
     .info-icon {
       align-items: center;
-      border: 0;
+      background: rgba(215, 123, 155, 0.11);
+      border: 1px solid rgba(215, 123, 155, 0.48);
       border-radius: 999px;
-      color: transparent;
+      color: var(--text);
       display: inline-grid;
       flex: 0 0 auto;
-      height: 1.35rem;
-      justify-items: center;
+      font-size: 0.72rem;
+      font-weight: 900;
+      height: 1.45rem;
       line-height: 1;
       place-items: center;
       position: relative;
       vertical-align: middle;
-      width: 1.35rem;
+      width: 1.45rem;
     }
     .halo-info::before {
       border: 2px solid #d77b9b;
       border-radius: 999px;
       box-shadow: 0 0 0 3px rgba(215, 123, 155, 0.18);
       content: "";
-      height: 0.84rem;
+      height: 0.78rem;
+      position: absolute;
       transform: rotate(-12deg);
-      width: 0.84rem;
+      width: 0.78rem;
     }
     .halo-info::after {
       background: var(--gold);
+      border: 1px solid var(--surface);
       border-radius: 999px;
       content: "";
-      height: 0.22rem;
+      height: 0.25rem;
+      inset: auto 0.2rem 0.16rem auto;
       position: absolute;
-      width: 0.22rem;
+      width: 0.25rem;
     }
+    .info-glyph { color: #fff7fb; position: relative; z-index: 1; }
     .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
     .metric-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
     .metric { background: var(--surface-2); border: 1px solid rgba(238, 229, 241, 0.14); border-radius: 0.5rem; padding: 0.8rem; }
     .metric strong { display: block; font-size: 1.45rem; }
-    .metric span { color: var(--muted); display: block; font-size: 0.86rem; }
+    .metric-label { align-items: center; color: var(--muted); display: flex; font-size: 0.86rem; gap: 0.35rem; justify-content: space-between; }
+    .activity-feed { display: grid; gap: 0.55rem; max-height: 25rem; overflow-y: auto; padding-right: 0.2rem; }
+    .activity-item {
+      align-items: center;
+      background: var(--surface-2);
+      border: 1px solid rgba(238, 229, 241, 0.14);
+      border-radius: 0.5rem;
+      display: grid;
+      gap: 0.65rem;
+      grid-template-columns: minmax(8rem, 10rem) minmax(0, 1fr) minmax(8rem, 13rem);
+      padding: 0.72rem 0.8rem;
+    }
+    .activity-status { border-radius: 999px; display: inline-flex; font-size: 0.78rem; font-weight: 800; justify-content: center; padding: 0.3rem 0.55rem; text-transform: uppercase; }
+    .activity-status.sent { background: rgba(121, 214, 164, 0.14); color: var(--good); }
+    .activity-status.pending { background: rgba(216, 182, 107, 0.16); color: var(--gold); }
+    .activity-status.review { background: rgba(107, 168, 216, 0.16); color: #9fd0f4; }
+    .activity-status.failed { background: rgba(255, 125, 152, 0.15); color: var(--bad); }
+    .activity-status.received { background: rgba(238, 229, 241, 0.09); color: var(--lavender); }
+    .activity-title { font-weight: 800; overflow-wrap: anywhere; }
+    .activity-meta { color: var(--muted); font-size: 0.84rem; margin-top: 0.15rem; }
+    .activity-destination { color: var(--gold); font-size: 0.86rem; text-align: right; }
     .quick-guide { background: linear-gradient(135deg, rgba(141, 47, 77, 0.35), rgba(37, 28, 40, 0.95)); }
     .kavita-hidden { background: rgba(37, 28, 40, 0.86); }
     pre { white-space: pre-wrap; }
     @media (max-width: 720px) {
       .topbar { align-items: stretch; flex-direction: column; }
       .status-stack { align-items: flex-start; justify-content: flex-start; }
+      .activity-item { grid-template-columns: 1fr; }
+      .activity-destination { text-align: left; }
       th, td { padding: 0.65rem 0.55rem; }
     }
   </style>
@@ -1079,7 +1115,12 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     </div>
     <p class="muted">Start here: confirm read events arrive, check unresolved external matches, then review the MAL outbox. Change MAL write mode to Send to MAL only when the pending outbox looks correct.</p>
   </section>
-  ${renderWeebCentralMetricsPanel(weebCentral)}
+  ${renderActivityFeed({
+    readEvents,
+    activeOutboxItems,
+    outboxHistoryItems,
+    externalReviews,
+  })}
   </section>
   <section class="tab-panel" data-tab-panel="settings">
   <div class="section-head">
@@ -1144,11 +1185,12 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <thead><tr><th>Received</th><th>Source</th><th>Kind</th><th>Series</th><th>Chapter</th><th>Kavita</th></tr></thead>
     <tbody>${readEvents.map(renderReadEventRow).join("")}</tbody>
   </table>
+  ${renderWeebCentralMetricsPanel(weebCentral)}
   <div class="section-head">
     <h2>Source Policies</h2>
-    ${infoIcon("Controls what the bridge may do for each Paperback source. MAL can be enabled while Kavita mirroring stays disabled.")}
+    ${infoIcon("Controls what the bridge may do for each Paperback source. New sources are auto-added the first time the bridge receives a read event from them.")}
   </div>
-  <p>${sourcePolicies.length} Paperback reading source${sourcePolicies.length === 1 ? "" : "s"} observed. This table controls MAL matching only.</p>
+  <p>${sourcePolicies.length} Paperback reading source${sourcePolicies.length === 1 ? "" : "s"} observed. New Paperback sources appear here automatically after their first read event. Default for new external sources: MAL tracking on, Kavita mirror off.</p>
   <table>
     <thead><tr><th>Source</th><th>MAL tracking</th><th>Save</th></tr></thead>
     <tbody>${sourcePolicies.map((policy) => renderSourcePolicyRow(policy, "mal")).join("")}</tbody>
@@ -1182,17 +1224,26 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   </section>
   <section class="tab-panel" data-tab-panel="outbox">
   <div class="section-head">
-    <h2>MAL Outbox</h2>
-    ${infoIcon("Pending MAL updates are written only when this outbox is processed. In Preview only mode, processing records a preview and does not change MAL. In Send to MAL mode, processing writes to MAL.")}
+    <h2>Active MAL Outbox</h2>
+    ${infoIcon("Only pending and failed MAL updates are shown here. Successful sends move to history but remain stored for duplicate protection and audit.")}
   </div>
-  <p>${outboxCounts.pending} pending, ${outboxCounts.succeeded} succeeded, ${outboxCounts.failed} failed. Current mode: <strong>${effectiveDryRun ? "preview only" : "send to MAL"}</strong>.</p>
+  <p>${outboxCounts.pending} pending, ${outboxCounts.failed} failed. Current mode: <strong>${effectiveDryRun ? "preview only" : "send to MAL"}</strong>.</p>
   <div class="toolbar">
     <button type="button" id="process-outbox">Process MAL outbox now</button>
     <span class="muted">Use this for retries or older pending items. New read events auto-process when Send to MAL is active.</span>
   </div>
   <table>
     <thead><tr><th>Created</th><th>Status</th><th>Target</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
-    <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
+    <tbody>${activeOutboxItems.map(renderOutboxRow).join("")}</tbody>
+  </table>
+  <div class="section-head">
+    <h2>MAL Send History</h2>
+    ${infoIcon("Successful sends stay in history for dedupe and audit, so repeated read events do not create duplicate MAL writes.")}
+  </div>
+  <p>${outboxCounts.succeeded} successful send${outboxCounts.succeeded === 1 ? "" : "s"} recorded. Successful sends stay in history for dedupe and audit.</p>
+  <table>
+    <thead><tr><th>Updated</th><th>Status</th><th>Target</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Note</th><th></th></tr></thead>
+    <tbody>${outboxHistoryItems.map(renderOutboxRow).join("")}</tbody>
   </table>
   </section>
   <section class="tab-panel" data-tab-panel="kavita">
@@ -1442,7 +1493,124 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
 
 function infoIcon(text: string): string {
   const label = escapeHtml(text);
-  return `<span class="info-icon halo-info" role="img" aria-label="${label}" title="${label}"><span class="sr-only">Info</span></span>`;
+  return `<span class="info-icon halo-info" role="img" aria-label="${label}" title="${label}"><span class="info-glyph" aria-hidden="true">?</span><span class="sr-only">Info</span></span>`;
+}
+
+interface ActivityFeedItem {
+  time: string;
+  status: "sent" | "pending" | "review" | "failed" | "received";
+  statusLabel: string;
+  source: string;
+  title: string;
+  detail: string;
+  destination: string;
+}
+
+function renderActivityFeed(input: {
+  readEvents: Awaited<ReturnType<SqliteBridgeStore["listReadEvents"]>>;
+  activeOutboxItems: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>;
+  outboxHistoryItems: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>;
+  externalReviews: ExternalReviewRecord[];
+}): string {
+  const items = buildActivityFeedItems(input).slice(0, 6);
+  return `<section class="panel">
+    <div class="section-head">
+      <h2>Recent Activity Feed</h2>
+      ${infoIcon("A short live-style feed of the newest bridge work: reads received, matching review, pending MAL writes, successful sends, and failures.")}
+    </div>
+    <p class="muted">Last ${items.length || 0} bridge item${items.length === 1 ? "" : "s"} across every Paperback source.</p>
+    <div class="activity-feed" aria-live="polite">
+      ${
+        items.length
+          ? items.map(renderActivityFeedItem).join("")
+          : `<div class="activity-item"><span class="activity-status received">Waiting</span><div><div class="activity-title">No read events yet</div><div class="activity-meta">Read a chapter in Paperback after linking the Progress Bridge tracker.</div></div><div class="activity-destination">Bridge</div></div>`
+      }
+    </div>
+  </section>`;
+}
+
+function buildActivityFeedItems(input: {
+  readEvents: Awaited<ReturnType<SqliteBridgeStore["listReadEvents"]>>;
+  activeOutboxItems: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>;
+  outboxHistoryItems: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>;
+  externalReviews: ExternalReviewRecord[];
+}): ActivityFeedItem[] {
+  const received = input.readEvents.map((event) => ({
+    time: event.receivedAt,
+    status: "received" as const,
+    statusLabel: "Received",
+    source: event.readingSourceName,
+    title: event.sourceTitle || event.sourceMangaId,
+    detail: `Ch. ${formatBridgeNumber(event.sourceChapterNumber)}${event.sourceChapterVolume === undefined ? "" : `, Vol. ${formatBridgeNumber(event.sourceChapterVolume)}`}`,
+    destination: "Matching",
+  }));
+  const review = input.externalReviews.map((review) => ({
+    time: review.createdAt ?? "",
+    status: "review" as const,
+    statusLabel: "Review",
+    source: review.readingSourceName,
+    title: review.title,
+    detail: review.reason,
+    destination: "Needs review",
+  }));
+  const active = input.activeOutboxItems.map((item) => ({
+    time: item.updatedAt || item.createdAt,
+    status: item.status === "failed" ? ("failed" as const) : ("pending" as const),
+    statusLabel: item.status === "failed" ? "Failed" : "Pending",
+    source: sourceLabelFromOutbox(item),
+    title: item.targetTitle ?? item.targetKey,
+    detail: outboxUpdateSummary(item),
+    destination: `MAL ${item.malId}`,
+  }));
+  const sent = input.outboxHistoryItems.map((item) => ({
+    time: item.updatedAt || item.createdAt,
+    status: "sent" as const,
+    statusLabel: "Sent",
+    source: sourceLabelFromOutbox(item),
+    title: item.targetTitle ?? item.targetKey,
+    detail: outboxUpdateSummary(item),
+    destination: `MAL ${item.malId}`,
+  }));
+  return [...received, ...review, ...active, ...sent].sort(
+    (left, right) => timestamp(right.time) - timestamp(left.time),
+  );
+}
+
+function renderActivityFeedItem(item: ActivityFeedItem): string {
+  return `<div class="activity-item">
+    <span class="activity-status ${item.status}">${escapeHtml(item.statusLabel)}</span>
+    <div>
+      <div class="activity-title">${escapeHtml(item.title)}</div>
+      <div class="activity-meta">${escapeHtml(item.source)} - ${escapeHtml(item.detail)} - ${escapeHtml(item.time)}</div>
+    </div>
+    <div class="activity-destination">${escapeHtml(item.destination)}</div>
+  </div>`;
+}
+
+function sourceLabelFromOutbox(
+  item: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>[number],
+): string {
+  if (item.targetType !== "external") return "Kavita";
+  const match = /^external:([^:]+):/u.exec(item.targetKey);
+  return match?.[1] ? decodeURIComponent(match[1]) : "External";
+}
+
+function outboxUpdateSummary(
+  item: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>[number],
+): string {
+  const parts: string[] = [];
+  if (item.update.num_chapters_read !== undefined) {
+    parts.push(`chapter ${formatBridgeNumber(item.update.num_chapters_read)}`);
+  }
+  if (item.update.num_volumes_read !== undefined) {
+    parts.push(`volume ${formatBridgeNumber(item.update.num_volumes_read)}`);
+  }
+  return parts.length ? parts.join(", ") : "progress update";
+}
+
+function timestamp(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function renderWeebCentralMetricsPanel(metrics: WeebCentralMetricsRecord): string {
@@ -1465,7 +1633,7 @@ function renderWeebCentralMetricsPanel(metrics: WeebCentralMetricsRecord): strin
 }
 
 function renderMetric(label: string, value: number | string, help: string): string {
-  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)} ${infoIcon(help)}</span></div>`;
+  return `<div class="metric"><div class="metric-label"><span>${escapeHtml(label)}</span>${infoIcon(help)}</div><strong>${escapeHtml(String(value))}</strong></div>`;
 }
 
 function renderKavitaSyncHiddenNotice(counts: {
