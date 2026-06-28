@@ -33,13 +33,14 @@ The source extension contains provisional code which, if Paperback supplies acti
   completed;
 - acknowledge successful and failed queued read actions explicitly;
 - deduplicate duplicate queue items for the same Kavita series/chapter pair;
-- optionally post a sanitized progress event to a local mock bridge receiver.
+- optionally post a sanitized progress event to the local production bridge receiver.
 
 This code is not a completed automatic sync feature until the runtime queue callback is proven on
 device.
 
-The mock bridge is in `apps/mock-progress-bridge`. It receives events at
-`POST /api/progress-events`, stores them as JSONL, and displays them at `/`.
+The production bridge in `apps/kavita-mal-bridge` receives events at
+`POST /api/progress-events`, stores them in SQLite, and displays them under
+**Recent Paperback Read Events**.
 
 The `Mutsuki Progress Bridge` extension is a separate tracker/provider. It does not update Kavita or
 MAL inside Paperback. Its job is to receive Paperback `TrackedMangaChapterReadAction` queue items
@@ -49,16 +50,14 @@ route for future cross-source events, because the action payload includes
 chapter/volume numbers. It still depends on Paperback associating the title with the
 tracker/provider, so it is not the rejected automatic source-to-Kavita workflow.
 
-## Why The Mock Bridge Exists First
+## Why The Bridge Receiver Was Tested First
 
 The riskiest unknown was whether Paperback source extensions receive reliable completed-read actions
-for the Kavita source itself. Current live evidence says they do not. The mock bridge settings
-action proves only the independent iOS/Paperback-to-bridge network path. The Progress Bridge tracker
-then isolates the next boundary: whether Paperback dispatches queued read actions to an associated
-progress provider.
-
-This mock bridge does not update MAL. It is intentionally dependency-free and Docker-hostable so it
-can be run beside Kavita during device testing.
+for the Kavita source itself. Current live evidence says they do not. The bridge settings action
+proves only the independent iOS/Paperback-to-bridge network path. The Progress Bridge tracker then
+isolates the next boundary: whether Paperback dispatches queued read actions to an associated
+progress provider. The separate mock receiver used during early phase-one testing has been removed;
+the production bridge is now the single event receiver.
 
 ## Event Shape
 
@@ -91,9 +90,9 @@ Generic tracker events include:
 - chapter and volume numbers seen by Paperback
 - title metadata supplied in the read action
 
-The mock and production bridge UIs prefer human-readable source title and chapter number fields,
-while retaining the raw Paperback chapter id for debugging. Older v1 events are still accepted and
-normalized so the diagnostic bridge remains useful during upgrades.
+The bridge UI prefers human-readable source title and chapter number fields, while retaining the raw
+Paperback chapter id for debugging. Older v1 events are still accepted and normalized during
+upgrades.
 
 Events must not contain:
 
@@ -162,21 +161,21 @@ Default policies:
 
 ## Device Feasibility Test
 
-1. Run the mock bridge:
+1. Run the production bridge:
 
    ```bash
-   cd apps/mock-progress-bridge
+   cd apps/kavita-mal-bridge
    docker compose -f docker-compose.example.yml up
    ```
 
 2. In Paperback, configure Mutsuki Kavita:
 
-   - Progress bridge URL: `http://<docker-host-ip>:<mapped-port>`
+   - Progress bridge URL: `http://<docker-host-ip>:6768`
    - Progress bridge token: blank unless `MUTSUKI_BRIDGE_TOKEN` is set
 
-3. Tap **Send mock bridge test event** in Mutsuki Kavita settings.
+3. Tap **Send bridge test event** in Mutsuki Kavita settings.
 
-4. Open `http://<docker-host-ip>:<mapped-port>`.
+4. Open `http://<docker-host-ip>:6768`.
 
 Expected result:
 
@@ -191,7 +190,7 @@ To test real queued read actions through the tracker/provider surface:
 3. Associate a test title with Mutsuki Progress Bridge using Paperback's tracker workflow.
 4. Complete a chapter from any source.
 5. Look for `[MutsukiBridgeQueue] ENTER` in Paperback logs.
-6. Open the mock bridge UI and confirm the event shows the original source and chapter id.
+6. Open the bridge UI and confirm the event shows the original source and chapter id.
 
 This proves tracker queue delivery. It does not prove source self-notification.
 

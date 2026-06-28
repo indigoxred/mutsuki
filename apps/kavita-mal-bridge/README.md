@@ -5,9 +5,6 @@ progress source of truth, automatically maps Kavita series to MyAnimeList when c
 receives normalized Paperback tracker events, and queues monotonic MAL progress updates through a
 SQLite-backed outbox.
 
-It is separate from `apps/mock-progress-bridge`, which remains a diagnostic receiver for Paperback
-read-action feasibility tests.
-
 ## Current Capabilities
 
 - SQLite persistence for mappings, review queue, outbox, audit logs, Paperback read events, and

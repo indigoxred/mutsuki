@@ -630,6 +630,17 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <p class="muted" id="form-status"></p>
     <pre class="muted" id="preview-output"></pre>
   </form>
+  <h2>Recent Paperback Read Events</h2>
+  <table>
+    <thead><tr><th>Received</th><th>Source</th><th>Kind</th><th>Series</th><th>Chapter</th><th>Kavita</th></tr></thead>
+    <tbody>${readEvents.map(renderReadEventRow).join("")}</tbody>
+  </table>
+  <h2>Source Policies</h2>
+  <p>${sourcePolicies.length} Paperback reading source${sourcePolicies.length === 1 ? "" : "s"} observed.</p>
+  <table>
+    <thead><tr><th>Source</th><th>MAL</th><th>Kavita Mirror</th><th>Save</th></tr></thead>
+    <tbody>${sourcePolicies.map(renderSourcePolicyRow).join("")}</tbody>
+  </table>
   <h2>Mappings</h2>
   <p>${mappings.length} linked Kavita series.</p>
   <table>
@@ -641,17 +652,6 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   <table>
     <thead><tr><th>Created</th><th>Status</th><th>Kavita Series</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
     <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
-  </table>
-  <h2>Source Policies</h2>
-  <p>${sourcePolicies.length} Paperback reading source${sourcePolicies.length === 1 ? "" : "s"} observed.</p>
-  <table>
-    <thead><tr><th>Source</th><th>MAL</th><th>Kavita Mirror</th><th>Save</th></tr></thead>
-    <tbody>${sourcePolicies.map(renderSourcePolicyRow).join("")}</tbody>
-  </table>
-  <h2>Recent Paperback Read Events</h2>
-  <table>
-    <thead><tr><th>Received</th><th>Source</th><th>Kind</th><th>Series</th><th>Chapter</th><th>Kavita</th></tr></thead>
-    <tbody>${readEvents.map(renderReadEventRow).join("")}</tbody>
   </table>
   <h2>Unresolved Matches</h2>
   <table>

@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { progressEventsEndpoint } from "../../src/Kavita/progress-bridge.js";
 
-test("builds mock bridge progress endpoint when Paperback runtime has no URL constructor", () => {
+test("builds progress bridge event endpoint when Paperback runtime has no URL constructor", () => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, "URL");
   Object.defineProperty(globalThis, "URL", { configurable: true, value: undefined });
   try {

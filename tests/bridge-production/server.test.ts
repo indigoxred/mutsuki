@@ -208,6 +208,10 @@ test("bridge server receives Paperback read events with source identity and defa
     assert.match(html, /Source Policies/u);
     assert.match(html, /External Story/u);
     assert.match(html, /approved-external-mappings/u);
+    assert.ok(
+      html.indexOf("Recent Paperback Read Events") < html.indexOf("Mappings"),
+      "recent read events should be visible before the long mappings table",
+    );
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();

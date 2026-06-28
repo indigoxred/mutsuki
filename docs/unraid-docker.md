@@ -1,7 +1,6 @@
 # Unraid Docker Deployment
 
-This guide deploys the production Kavita-to-MyAnimeList bridge. It is separate from the diagnostic
-mock progress bridge.
+This guide deploys the production Kavita-to-MyAnimeList bridge.
 
 The bridge polls Kavita as the progress source of truth, maps Kavita series to MAL, and queues
 monotonic MAL updates through SQLite. Keep dry-run enabled until mappings, review queue entries, and

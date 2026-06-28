@@ -3,7 +3,7 @@ import { ContentRating, SourceIntents, type ExtensionInfo } from "@paperback/typ
 export default {
   name: "Mutsuki Kavita",
   description: "Connects Paperback to Kavita for manga, PDFs, and EPUB light novels.",
-  version: "0.1.16",
+  version: "0.1.17",
   icon: "icon.png",
   language: "en",
   contentRating: ContentRating.EVERYONE,

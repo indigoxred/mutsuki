@@ -42,7 +42,7 @@ test("settings test connection probes the current account endpoint", async () =>
   assert.equal(requests[0]?.headers?.["x-api-key"], "secret-key");
 });
 
-test("settings expose a direct diagnostic mock bridge test event action", () => {
+test("settings expose a direct diagnostic bridge test event action", () => {
   installApplicationStub({
     scheduleRequest: async () => {
       throw new Error("form inspection should not send requests");
@@ -52,10 +52,11 @@ test("settings expose a direct diagnostic mock bridge test event action", () => 
   const form = new KavitaSettingsForm();
   const serialized = JSON.stringify(form.getSections());
 
-  assert.match(serialized, /Send mock bridge test event/u);
+  assert.match(serialized, /Send bridge test event/u);
+  assert.doesNotMatch(serialized, /mock bridge/u);
 });
 
-test("settings mock bridge test action sends one sanitized synthetic event", async () => {
+test("settings bridge test action sends one sanitized synthetic event", async () => {
   const requests: KavitaRequest[] = [];
   installApplicationStub({
     scheduleRequest: async (request: KavitaRequest) => {
@@ -76,7 +77,7 @@ test("settings mock bridge test action sends one sanitized synthetic event", asy
   const form = new KavitaSettingsForm();
   Object.defineProperty(form, "reloadForm", { value: () => undefined });
 
-  await form.handleSendMockBridgeTestEvent();
+  await form.handleSendBridgeTestEvent();
 
   assert.equal(requests.length, 1);
   assert.equal(requests[0]?.method, "POST");
@@ -84,7 +85,7 @@ test("settings mock bridge test action sends one sanitized synthetic event", asy
   assert.equal(requests[0]?.headers?.Authorization, "Bearer bridge-token");
   const payload = JSON.parse(requests[0]?.body ?? "{}") as { title?: string; actionId?: string };
   assert.equal(payload.actionId, "diagnostic-settings-test");
-  assert.equal(payload.title, "Mutsuki diagnostic mock bridge test event");
+  assert.equal(payload.title, "Mutsuki diagnostic bridge test event");
   assert.equal(JSON.stringify(payload).includes("secret-key"), false);
   assert.equal(JSON.stringify(payload).includes("bridge-token"), false);
 });

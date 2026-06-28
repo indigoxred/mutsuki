@@ -32,7 +32,7 @@ type ProgressBridgeImplementation = Extension &
   SettingsFormProviding &
   MangaProgressProviding;
 
-const PROGRESS_BRIDGE_VERSION = "0.1.3";
+const PROGRESS_BRIDGE_VERSION = "0.1.4";
 const PROGRESS_BRIDGE_ICON_URL =
   "https://indigoxred.github.io/mutsuki/ProgressBridge/static/icon.png";
 
@@ -222,7 +222,7 @@ class ProgressBridgeSettingsForm extends Form {
         LabelRow("purpose", {
           title: "Queue receiver",
           subtitle:
-            "This tracker forwards Paperback read-action queue events to the mock bridge. It only receives events for titles associated with this tracker.",
+            "This tracker forwards Paperback read-action queue events to the Mutsuki bridge. It only receives events for titles associated with this tracker.",
         }),
         InputRow("progress-bridge-url", {
           title: "Progress bridge URL",
@@ -249,15 +249,15 @@ class ProgressBridgeSettingsForm extends Form {
             "handleDebugLoggingChange",
           ),
         }),
-        ButtonRow("send-mock-bridge-test-event", {
-          title: "Send mock bridge test event",
+        ButtonRow("send-bridge-test-event", {
+          title: "Send bridge test event",
           onSelect: Application.Selector(
             this as ProgressBridgeSettingsForm,
-            "handleSendMockBridgeTestEvent",
+            "handleSendBridgeTestEvent",
           ),
         }),
         this.status
-          ? LabelRow("status", { title: "Mock bridge test", subtitle: this.status })
+          ? LabelRow("status", { title: "Bridge test", subtitle: this.status })
           : undefined,
       ]),
     ];
@@ -275,7 +275,7 @@ class ProgressBridgeSettingsForm extends Form {
     this.update({ debugLogging: value });
   }
 
-  async handleSendMockBridgeTestEvent(): Promise<void> {
+  async handleSendBridgeTestEvent(): Promise<void> {
     try {
       await sendProgressBridgeEvent({
         bridgeUrl: this.settings.progressBridgeUrl,

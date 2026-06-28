@@ -10,8 +10,8 @@ The source extension exports `MangaProgressProviding`, advertises
 unit tests. Live Paperback 0.9 device logs still show local chapter completion
 without any call to `processChapterReadActionQueue()`.
 
-The failure boundary is therefore before Kavita endpoints, before the mock
-bridge, and before Mutsuki's read-action mapping code.
+The failure boundary is therefore before Kavita endpoints, before the bridge,
+and before Mutsuki's read-action mapping code.
 
 ## Inspected Contract
 
@@ -68,7 +68,7 @@ Observed across four Paperback 0.9 debug sessions:
 - Generated capabilities are `[4, 64, 1, 2, 32]`.
 - Mutsuki Kavita v0.1.13 logs `[MutsukiProgressRuntime]` with all three progress-provider methods
   present on the exported runtime object.
-- The settings action sends a diagnostic mock bridge event successfully, proving
+- The settings action sends a diagnostic bridge event successfully, proving
   iOS/Paperback-to-bridge HTTP transport.
 - Paperback logs ordinary image-based manga chapters as complete.
 - Paperback updates local chapter progress and continues to the next chapter.
@@ -76,7 +76,7 @@ Observed across four Paperback 0.9 debug sessions:
 exiting loop`.
 - Mutsuki never logs an invocation from `processChapterReadActionQueue()`.
 - Kavita never receives `/api/Reader/mark-chapter-read`.
-- The mock bridge never receives `POST /api/progress-events`.
+- The bridge never receives `POST /api/progress-events` from source self-notifications.
 - The behavior is not EPUB-specific; it also occurs for ordinary image manga.
 
 This indicates that reading a chapter from a source extension is not sufficient
@@ -130,7 +130,7 @@ Mutsuki's internal queue processor is covered by tests for:
 Those tests only prove behavior after Paperback supplies actions. The live
 device evidence shows execution never reaches that code.
 
-The mock bridge is therefore diagnostic only. It can prove iOS/Paperback network
+The bridge test event is therefore diagnostic only. It can prove iOS/Paperback network
 reachability with the settings button, but it cannot solve missing read actions.
 
 ## Controlled Test Matrix
@@ -159,9 +159,9 @@ If explicit per-title tracker linking is required, it does not satisfy
 Mutsuki's automatic workflow requirement.
 
 Mutsuki now also ships a separate `Mutsuki Progress Bridge` progress provider.
-That extension is intentionally a tracker/provider diagnostic surface rather
-than a content source. It can forward queued read actions from any source to the
-mock bridge when Paperback associates the title with that tracker. It is useful
+That extension is intentionally a tracker/provider event surface rather than a
+content source. It can forward queued read actions from any source to the
+production bridge when Paperback associates the title with that tracker. It is useful
 for proving cross-source queue delivery and event shape, but it does not remove
 the manual association limitation.
 

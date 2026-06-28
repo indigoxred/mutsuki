@@ -39,8 +39,6 @@ importers:
 
   apps/kavita-mal-bridge: {}
 
-  apps/mock-progress-bridge: {}
-
 packages:
 
   '@bufbuild/protobuf@2.12.0':

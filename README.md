@@ -6,12 +6,10 @@ It contains three separately installable extensions:
 
 - **Mutsuki Kavita**: browse/search Kavita, read image-based manga/PDF pages, and render EPUB light novels as Paperback HTML chapters.
 - **Mutsuki MyAnimeList**: authenticate with MAL, link titles through Paperback's tracker workflow, and update chapter/volume progress without regressions.
-- **Mutsuki Progress Bridge**: diagnostic tracker/provider that forwards Paperback queued read actions to the local mock bridge.
+- **Mutsuki Progress Bridge**: tracker/provider that forwards Paperback queued read actions to the Mutsuki Kavita MAL Bridge.
 
-It also includes two bridge apps:
+It also includes one Docker-hosted bridge app:
 
-- `apps/mock-progress-bridge`: a diagnostic Phase 1 receiver which proves Paperback-to-bridge
-  networking and displays queued read actions forwarded by the Mutsuki Progress Bridge tracker.
 - `apps/kavita-mal-bridge`: the Phase 2 production bridge foundation which polls Kavita as the
   progress source of truth, receives normalized Paperback read events, stores source
   policies/mappings/outbox/audit/OAuth state in SQLite, and prepares monotonic MAL updates.
@@ -76,33 +74,20 @@ Paperback's local progress without invoking Mutsuki Kavita's progress queue meth
 Paperback-to-Kavita read sync is therefore blocked until Paperback can deliver a read-completion
 callback to the original source or to an automatically associated provider.
 
-The settings action **Send mock bridge test event** posts one synthetic diagnostic event to the mock
-bridge. It only proves iOS/Paperback networking to the bridge; it is not a read-sync solution.
+The settings action **Send bridge test event** posts one synthetic diagnostic event to the configured
+production bridge. It only proves iOS/Paperback networking to the bridge; it is not a read-sync
+solution.
 
 The **Mutsuki Progress Bridge** tracker is the supported diagnostic path for actual queued read
 actions. It can receive `TrackedMangaChapterReadAction` items from Paperback for titles associated
-with that tracker and forward sanitized events to either bridge. Event payloads now include
+with that tracker and forward sanitized events to the production bridge. Event payloads now include
 `readingSourceId`, `readingSourceName`, and `readingSourceKind`, so the bridge can distinguish
 Mutsuki Kavita reads from external sources such as MangaDex or WeebCentral. It still depends on
 Paperback associating the title with the tracker; it does not create a global read-event feed by
 itself.
 
-Run the mock bridge:
-
-```bash
-pnpm run bridge:mock:build
-pnpm run bridge:mock:start
-```
-
-Or with Docker:
-
-```bash
-cd apps/mock-progress-bridge
-docker compose -f docker-compose.example.yml up
-```
-
-Open `http://<docker-host-ip>:6767` to view received events when using the compose example. The full architecture and next bridge phase are
-documented in `docs/progress-sync-architecture.md`; the current read-event boundary is documented in
+The full architecture and next bridge phase are documented in
+`docs/progress-sync-architecture.md`; the current read-event boundary is documented in
 `docs/paperback-read-event-blocker.md`.
 
 Run the Phase 2 Kavita-to-MAL bridge foundation:
@@ -135,7 +120,6 @@ For Unraid or persistent Docker deployment, see `docs/unraid-docker.md`.
 pnpm install
 pnpm run typecheck
 pnpm run test
-pnpm run bridge:mock:build
 pnpm run bridge:mal:build
 pnpm run bundle
 pnpm run dev

@@ -287,7 +287,7 @@ export class KavitaSettingsForm extends Form {
         LabelRow("progress-sync-note", {
           title: "Progress diagnostics",
           subtitle:
-            "The mock bridge test proves app-to-bridge networking only. Automatic read queue delivery is still under verification.",
+            "The bridge test proves app-to-bridge networking only. Read events require a tracker association.",
         }),
         InputRow("progress-bridge-url", {
           title: "Progress bridge URL",
@@ -306,16 +306,13 @@ export class KavitaSettingsForm extends Form {
             "handleProgressBridgeTokenChange",
           ),
         }),
-        ButtonRow("send-mock-bridge-test-event", {
-          title: "Send mock bridge test event",
-          onSelect: Application.Selector(
-            this as KavitaSettingsForm,
-            "handleSendMockBridgeTestEvent",
-          ),
+        ButtonRow("send-bridge-test-event", {
+          title: "Send bridge test event",
+          onSelect: Application.Selector(this as KavitaSettingsForm, "handleSendBridgeTestEvent"),
         }),
         this.progressBridgeStatus
           ? LabelRow("progress-bridge-status", {
-              title: "Mock bridge test",
+              title: "Bridge test",
               subtitle: this.progressBridgeStatus,
             })
           : undefined,
@@ -399,13 +396,13 @@ export class KavitaSettingsForm extends Form {
     this.update({ progressBridgeToken: value });
   }
 
-  async handleSendMockBridgeTestEvent(): Promise<void> {
+  async handleSendBridgeTestEvent(): Promise<void> {
     try {
       const now = new Date().toISOString();
       await sendProgressBridgeEvent({
         bridgeUrl: this.settings.progressBridgeUrl,
         token: this.settings.progressBridgeToken || undefined,
-        event: diagnosticMockBridgeEvent(now),
+        event: diagnosticBridgeEvent(now),
         transport: settingsProgressBridgeTransport,
       });
       this.progressBridgeStatus = "Diagnostic event sent.";
@@ -455,7 +452,7 @@ const settingsProgressBridgeTransport: ProgressBridgeTransport = async (request)
   return { status: response.status };
 };
 
-function diagnosticMockBridgeEvent(now: string): KavitaProgressBridgeEvent {
+function diagnosticBridgeEvent(now: string): KavitaProgressBridgeEvent {
   return {
     version: 1,
     schemaVersion: 2,
@@ -465,12 +462,12 @@ function diagnosticMockBridgeEvent(now: string): KavitaProgressBridgeEvent {
     occurredAt: now,
     receivedAt: now,
     mangaId: "diagnostic:kavita-settings",
-    paperbackChapterId: "diagnostic:mock-bridge-test",
+    paperbackChapterId: "diagnostic:bridge-test",
     readingSourceId: "Kavita",
     readingSourceName: "Mutsuki Kavita",
     readingSourceKind: "kavita",
     sourceMangaId: "diagnostic:kavita-settings",
-    sourceChapterId: "diagnostic:mock-bridge-test",
+    sourceChapterId: "diagnostic:bridge-test",
     sourceChapterNumber: 0,
     kavitaSeriesId: 1,
     kavitaChapterId: 1,
@@ -479,7 +476,7 @@ function diagnosticMockBridgeEvent(now: string): KavitaProgressBridgeEvent {
     isLastInVolume: false,
     shouldMarkKavitaRead: false,
     kavitaMarkedRead: false,
-    title: "Mutsuki diagnostic mock bridge test event",
+    title: "Mutsuki diagnostic bridge test event",
     listingMode: "diagnostic",
     role: "diagnostic",
   };
