@@ -104,6 +104,11 @@ database path configured; use the local setup page to save the Kavita URL/API ke
 details, poll interval, max MAL searches per run, and dry-run mode. MAL access and refresh tokens
 are stored in SQLite after OAuth authorization and refreshed before scheduled sync runs.
 
+For external Paperback source reads, the important manual button is **Process MAL outbox now**.
+That button only processes already-captured MAL work and does not require Kavita polling to succeed.
+**Run Kavita sync now** is optional/advanced and may fail independently if the Kavita server is not
+reachable.
+
 The production bridge also accepts Paperback tracker events at `POST /api/progress-events` and
 shows them in **Recent Paperback Read Events**. Each observed Paperback source gets a **Source
 Policies** row. MAL handling can be disabled per source, and Kavita mirroring defaults to disabled
@@ -114,10 +119,12 @@ when the match is ambiguous.
 
 External title matching is not limited to official MAL text search. The bridge forwards safe
 Paperback title metadata, generates title variants, uses deterministic MAL/AniList metadata when
-available, discovers extra candidate MAL IDs through Jikan and public AniList search, then validates
-all discovered IDs through official MAL direct lookup before scoring. Manual MAL ID entry remains a
-last-resort escape hatch for unresolved ambiguity, not the normal workflow. `Chained Soldier`
-resolving to MAL `116880` (`Mato Seihei no Slave`) is covered as a regression fixture.
+available, enriches supported source metadata such as WeebCentral public series pages and MangaDex
+public manga metadata, discovers extra candidate MAL IDs through Jikan and public AniList search,
+then validates all discovered IDs through official MAL direct lookup before scoring. Manual MAL ID
+entry remains a last-resort escape hatch for unresolved ambiguity, not the normal workflow.
+`Chained Soldier` resolving to MAL `116880` (`Mato Seihei no Slave`) is covered as a regression
+fixture.
 
 Use **Preview Kavita progress** on the setup page, or call
 `GET /api/kavita/observed-progress?limit=25`, to verify the bridge can read Kavita's observed

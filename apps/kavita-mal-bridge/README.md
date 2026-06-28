@@ -18,6 +18,9 @@ SQLite-backed outbox.
 - MAL OAuth disconnect/re-authorize support for stale or incorrect tokens.
 - Token refresh before scheduled/manual sync runs.
 - Deterministic MAL matching from existing Kavita/source MAL URLs/IDs and AniList IDs/links.
+- First-class MangaDex enrichment from the public MangaDex manga metadata endpoint. The bridge uses
+  a MangaDex title UUID or share URL to read public `attributes.links` MAL/AniList IDs when
+  Paperback did not forward those nested fields.
 - First-class WeebCentral enrichment from the public `https://weebcentral.com/series/<id>` detail
   page. The bridge extracts public MAL/AniList/MangaUpdates links when present, then validates any
   resolved MAL ID through the official MAL API before mapping.
@@ -87,12 +90,16 @@ http://192.168.50.138:6768/api/mal/oauth/callback
 ```
 
 After saving the MAL client settings, use **Authorize MAL** on the bridge page. Keep dry-run enabled
-until the UI shows the expected mappings and queued updates. Dry-run syncs preview pending MAL writes
-without marking them succeeded, so the same outbox rows can be pushed after you disable dry-run. Use
-**Check readiness** to verify the configured Kavita endpoint can be queried with a lightweight probe
-and the stored MAL token is accepted before running a sync.
-Manual and scheduled sync runs require both Kavita configuration and a stored MAL OAuth token; the
-bridge will not poll the full library for mappings until MAL is authorized.
+until the UI shows the expected mappings and queued updates. Dry-run processing previews pending MAL
+writes without marking them succeeded, so the same outbox rows can be pushed after you disable
+dry-run. Use **Process MAL outbox now** to preview or send already-captured MAL work. This does not
+require Kavita polling to succeed.
+
+Use **Check readiness** to verify the configured Kavita endpoint can be queried with a lightweight
+probe and the stored MAL token is accepted. **Run Kavita sync now** is the optional Kavita-polling
+path; it requires both Kavita configuration and a stored MAL OAuth token. A Kavita readiness failure
+does not prevent external Paperback read events from entering the MAL outbox or the outbox processor
+from sending queued MAL updates.
 If the wrong MAL account is authorized or MAL rejects the stored token, use **Disconnect MAL** and
 then run **Authorize MAL** again.
 If MAL reports a permanent refresh failure for the stored OAuth token, the bridge clears that token
@@ -110,7 +117,8 @@ Matches** for manual approval or ignore.
 The matching flow is conservative and automatic-first:
 
 1. Deterministic MAL IDs/URLs from source or Kavita metadata auto-link after validation.
-2. WeebCentral enrichment fetches the public series page and uses MAL/AniList links when available.
+2. Source enrichment fetches public metadata for supported sources, including WeebCentral series
+   pages and MangaDex manga metadata, and uses MAL/AniList links when available.
 3. Jikan and AniList discover candidate MAL IDs when official MAL search misses a title.
 4. Every discovered candidate is hydrated through the official MAL API before scoring.
 5. Exact primary title matches outrank exact alternate-title noise. True exact-primary ties stay in
@@ -136,6 +144,7 @@ ID without presenting weak official-search noise as a recommendation.
 - `GET /api/external-unresolved-matches`
 - `GET /api/ignored-series`
 - `GET /api/outbox`
+- `POST /api/outbox/process`
 - `GET /api/audit-log`
 - `GET /api/progress-events`
 - `POST /api/progress-events`

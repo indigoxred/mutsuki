@@ -55,6 +55,13 @@ export interface BridgeSyncResult {
   outboxFailed: number;
 }
 
+export interface BridgeOutboxProcessResult {
+  outboxProcessed: number;
+  outboxPreviewed: number;
+  outboxSucceeded: number;
+  outboxFailed: number;
+}
+
 export async function runBridgeSyncOnce(input: {
   store: SqliteBridgeStore;
   kavita: BridgeKavitaClient;
@@ -162,6 +169,23 @@ export async function runBridgeSyncOnce(input: {
     }
   }
 
+  const outboxResult = await processBridgeOutboxOnce({
+    store: input.store,
+    mal: input.mal,
+    dryRun: input.dryRun,
+  });
+  result.outboxProcessed = outboxResult.outboxProcessed;
+  result.outboxPreviewed = outboxResult.outboxPreviewed;
+  result.outboxSucceeded = outboxResult.outboxSucceeded;
+  result.outboxFailed = outboxResult.outboxFailed;
+  return result;
+}
+
+export async function processBridgeOutboxOnce(input: {
+  store: SqliteBridgeStore;
+  mal: Pick<BridgeMalClient, "updateProgress">;
+  dryRun: boolean;
+}): Promise<BridgeOutboxProcessResult> {
   const outboxResult = await processOutboxOnce({
     store: input.store,
     dryRun: input.dryRun,
@@ -180,11 +204,12 @@ export async function runBridgeSyncOnce(input: {
         }),
       }),
   });
-  result.outboxProcessed = outboxResult.processed;
-  result.outboxPreviewed = outboxResult.previewed;
-  result.outboxSucceeded = outboxResult.succeeded;
-  result.outboxFailed = outboxResult.failed;
-  return result;
+  return {
+    outboxProcessed: outboxResult.processed,
+    outboxPreviewed: outboxResult.previewed,
+    outboxSucceeded: outboxResult.succeeded,
+    outboxFailed: outboxResult.failed,
+  };
 }
 
 async function createMappingOrReview(

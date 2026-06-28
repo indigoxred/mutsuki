@@ -46,6 +46,37 @@ test("Kavita readiness uses a lightweight series probe without fetching volume p
   }
 });
 
+test("Kavita readiness includes sanitized fetch failure causes", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      const error = new Error("fetch failed") as Error & {
+        cause?: { code?: string; message?: string };
+      };
+      error.cause = {
+        code: "ECONNREFUSED",
+        message: "connect ECONNREFUSED 192.168.50.138:5000",
+      };
+      throw error;
+    };
+
+    const result = await checkKavitaReadiness({
+      ...bridgeConfigFromEnv({}),
+      kavitaBaseUrl: "http://192.168.50.138:5000?apiKey=secret",
+      kavitaApiKey: "secret-key",
+    });
+
+    assert.equal(result.configured, true);
+    assert.equal(result.ok, false);
+    assert.match(result.message ?? "", /fetch failed/u);
+    assert.match(result.message ?? "", /ECONNREFUSED/u);
+    assert.doesNotMatch(result.message ?? "", /secret/u);
+    assert.doesNotMatch(result.message ?? "", /apiKey=/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Kavita client derives read progress from current volume and chapter DTOs", async () => {
   const originalFetch = globalThis.fetch;
   const seenUrls: string[] = [];

@@ -23,6 +23,7 @@ import {
 } from "./external-events.js";
 import { createAnilistResolver } from "./resolvers/anilist-resolver.js";
 import { createJikanResolver } from "./resolvers/jikan-resolver.js";
+import { createMangaDexResolver } from "./resolvers/mangadex-resolver.js";
 import { composeTitleResolvers } from "./resolvers/title-resolver.js";
 import { createWeebCentralResolver } from "./resolvers/weebcentral-resolver.js";
 import type { BridgeTrackingMode } from "./policy.js";
@@ -39,7 +40,13 @@ import {
   type SourcePolicyRecord,
 } from "./progress-events.js";
 import { BridgeScheduler, type BridgeSchedulerResult } from "./scheduler.js";
-import { runBridgeSyncOnce, type BridgeObservedSeries, type BridgeSyncResult } from "./sync.js";
+import {
+  processBridgeOutboxOnce,
+  runBridgeSyncOnce,
+  type BridgeObservedSeries,
+  type BridgeOutboxProcessResult,
+  type BridgeSyncResult,
+} from "./sync.js";
 import {
   SqliteBridgeStore,
   type ExternalReviewRecord,
@@ -53,6 +60,7 @@ export interface KavitaMalBridgeServerOptions {
   store: SqliteBridgeStore;
   dryRun: boolean;
   runSync: () => Promise<BridgeSyncResult>;
+  processOutbox?: () => Promise<BridgeOutboxProcessResult>;
   oauthTransport?: OAuthTransport;
   checkReadiness?: () => Promise<BridgeReadinessResult>;
   previewKavitaProgress?: (limit: number) => Promise<BridgeObservedSeries[]>;
@@ -157,6 +165,18 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       }
       if (request.method === "GET" && url.pathname === "/api/outbox") {
         await respondJson(response, { items: await options.store.listOutbox(100) });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/outbox/process") {
+        if (!options.processOutbox) {
+          await respondJson(response, { error: "MAL outbox processing is not configured." }, 501);
+          return;
+        }
+        try {
+          await respondJson(response, await options.processOutbox());
+        } catch (error) {
+          await respondJson(response, safeErrorBody(error), syncErrorStatus(error));
+        }
         return;
       }
       const retryOutbox = /^\/api\/outbox\/([^/]+)\/retry$/u.exec(url.pathname);
@@ -902,7 +922,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
           <option value="true"${effectiveDryRun ? " selected" : ""}>Preview only (dry run)</option>
           <option value="false"${!effectiveDryRun ? " selected" : ""}>Send to MAL (live writes)</option>
         </select>
-        <span class="help">Saving this setting does not send old pending outbox items by itself. Use the run button below, or wait for the scheduled poll.</span>
+        <span class="help">Saving this setting does not send old pending outbox items by itself. Use Process MAL outbox now, or wait for the scheduled poll.</span>
       </label>
       <label><span class="field-title">Show Kavita sync panels ${infoIcon("Shows the long Kavita mapping and review tables. Keep this off when you are mainly testing Paperback read events from source extensions.")}</span>
         <select name="showKavitaSyncPanels">
@@ -945,7 +965,8 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <button type="submit">Save settings</button>
     <a class="button" href="/api/mal/oauth/start">Connect MAL</a>
     <button type="button" id="disconnect-mal">Disconnect MAL</button>
-    <button type="button" id="run-sync">Run Kavita sync and process MAL outbox now</button>
+    <button type="button" id="process-outbox">Process MAL outbox now</button>
+    <button type="button" id="run-sync">Run Kavita sync now</button>
     <button type="button" id="check-readiness">Check readiness</button>
     <button type="button" id="preview-kavita">Preview Kavita progress</button>
     <p class="muted" id="form-status"></p>
@@ -1047,7 +1068,12 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     document.querySelector("#run-sync").addEventListener("click", async () => {
       const response = await fetch("/api/sync/run", { method: "POST" });
       const result = response.ok ? await response.json() : undefined;
-      status.textContent = result ? syncResultMessage(result) : await responseErrorMessage(response, "Sync failed.");
+      status.textContent = result ? syncResultMessage(result) : await responseErrorMessage(response, "Kavita sync failed.");
+    });
+    document.querySelector("#process-outbox").addEventListener("click", async () => {
+      const response = await fetch("/api/outbox/process", { method: "POST" });
+      const result = response.ok ? await response.json() : undefined;
+      status.textContent = result ? outboxResultMessage(result) : await responseErrorMessage(response, "MAL outbox processing failed.");
     });
     document.querySelector("#disconnect-mal").addEventListener("click", async () => {
       const response = await fetch("/api/mal/oauth/disconnect", { method: "POST" });
@@ -1103,6 +1129,21 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
           body: "{}",
         });
         status.textContent = response.ok ? "Resolution retried." : await responseErrorMessage(response, "Retry failed.");
+        if (response.ok) {
+          const result = await response.json().catch(() => undefined);
+          const processing = result && result.processing ? result.processing : undefined;
+          if (processing?.status === "queued") {
+            status.textContent = "Resolved to MAL " + processing.malId + " and queued an outbox update. Refreshing...";
+            window.setTimeout(() => window.location.reload(), 600);
+          } else if (processing?.status === "mapped") {
+            status.textContent = "Resolved to MAL " + processing.malId + ". Refreshing...";
+            window.setTimeout(() => window.location.reload(), 600);
+          } else if (processing?.status === "review") {
+            status.textContent = "Still unresolved after retry: " + (processing.reason ?? "needs review") + ".";
+          } else if (processing?.status === "skipped") {
+            status.textContent = "Retry skipped: " + (processing.reason ?? "not eligible") + ".";
+          }
+        }
       });
     }
     for (const form of document.querySelectorAll(".no-mal-entry-form")) {
@@ -1177,6 +1218,13 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
         + (result.searchDeferred ?? 0) + " deferred, "
         + (result.searchBudgetSkipped ?? 0) + " budget-skipped, "
         + result.updatesQueued + " queued, "
+        + (result.outboxPreviewed ?? 0) + " previewed, "
+        + result.outboxSucceeded + " pushed, "
+        + result.outboxFailed + " failed.";
+    }
+    function outboxResultMessage(result) {
+      return "MAL outbox: "
+        + result.outboxProcessed + " pending item(s) checked, "
         + (result.outboxPreviewed ?? 0) + " previewed, "
         + result.outboxSucceeded + " pushed, "
         + result.outboxFailed + " failed.";
@@ -1637,6 +1685,19 @@ async function startFromEnv(): Promise<void> {
       maxMalSearchesPerRun: config.maxMalSearchesPerRun,
     });
   };
+  const processOutbox = async (): Promise<BridgeOutboxProcessResult> => {
+    await refreshStoredMalTokenIfNeeded({ baseConfig, store });
+    const config = await effectiveBridgeConfig(baseConfig, store);
+    if (!config.malAccessToken) {
+      throw new Error("MAL OAuth token is not configured. Authorize MAL before processing outbox.");
+    }
+    const mal = createMalClient(config);
+    return processBridgeOutboxOnce({
+      store,
+      mal,
+      dryRun: config.dryRun,
+    });
+  };
   const initialConfig = await effectiveBridgeConfig(baseConfig, store);
   const scheduler = new BridgeScheduler({
     intervalMs: initialConfig.pollIntervalSeconds * 1000,
@@ -1647,11 +1708,13 @@ async function startFromEnv(): Promise<void> {
     store,
     dryRun: baseConfig.dryRun,
     runSync,
+    processOutbox,
     processReadEvent: async (event, policy) => {
       await refreshStoredMalTokenIfNeeded({ baseConfig, store });
       const config = await effectiveBridgeConfig(baseConfig, store);
       const mal = createMalClient(config);
       const resolvers = [
+        createMangaDexResolver({ config, store }),
         createWeebCentralResolver({ config, store }),
         ...(config.enableJikanResolver ? [createJikanResolver({ config, store })] : []),
         ...(config.enableAnilistResolver ? [createAnilistResolver({ config, store })] : []),

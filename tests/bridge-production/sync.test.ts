@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  processBridgeOutboxOnce,
   runBridgeSyncOnce,
   type BridgeKavitaClient,
   type BridgeMalClient,
@@ -72,6 +73,57 @@ test("sync polls Kavita, auto-links deterministic MAL metadata, and queues monot
           entry.message.includes("Dry-run MAL update previewed"),
       ),
     );
+  } finally {
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("MAL outbox processing can run without polling Kavita", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-sync-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.upsertSeriesMapping({
+    kavitaSeriesId: 44,
+    title: "Already Matched",
+    malId: 777,
+    matchMethod: "manual",
+    confidence: 1,
+    locked: true,
+    chapterOffset: 0,
+    volumeOffset: 0,
+    trackingMode: "chapter-and-volume",
+    lastObservedChapter: 8,
+    lastObservedVolume: 2,
+    lastPushedChapter: 0,
+    lastPushedVolume: 0,
+  });
+  const { enqueueMalUpdate } = await import("../../apps/kavita-mal-bridge/src/outbox.js");
+  await enqueueMalUpdate(store, {
+    kavitaSeriesId: 44,
+    malId: 777,
+    update: { num_chapters_read: 8, num_volumes_read: 2 },
+    reason: "paperback-read-event",
+  });
+  const pushed: unknown[] = [];
+
+  try {
+    const result = await processBridgeOutboxOnce({
+      store,
+      mal: {
+        updateProgress: async (_malId, update) => {
+          pushed.push(update);
+          return { ok: true };
+        },
+      },
+      dryRun: false,
+    });
+
+    assert.equal(result.outboxProcessed, 1);
+    assert.equal(result.outboxSucceeded, 1);
+    assert.equal(result.outboxFailed, 0);
+    assert.equal(pushed.length, 1);
+    assert.equal((await store.listOutbox(10))[0]?.status, "succeeded");
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });

@@ -177,6 +177,56 @@ test("bridge server exposes outbox status and recent items", async () => {
   }
 });
 
+test("bridge server processes the MAL outbox without running Kavita sync", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await enqueueMalUpdate(store, {
+    kavitaSeriesId: 99,
+    malId: 12345,
+    update: { num_chapters_read: 8, num_volumes_read: 2 },
+    reason: "paperback-read-event",
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: false,
+    runSync: async () => {
+      throw new Error("fetch failed");
+    },
+    processOutbox: async () => ({
+      outboxProcessed: 1,
+      outboxPreviewed: 0,
+      outboxSucceeded: 1,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/outbox/process`, {
+      method: "POST",
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.equal(body.outboxProcessed, 1);
+    assert.equal(body.outboxSucceeded, 1);
+
+    const syncResponse = await fetch(`http://127.0.0.1:${port}/api/sync/run`, {
+      method: "POST",
+    });
+    assert.equal(syncResponse.status, 500);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge server receives Paperback read events with source identity and default policy", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));

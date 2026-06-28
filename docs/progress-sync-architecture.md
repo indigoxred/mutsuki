@@ -119,6 +119,9 @@ Kavita identity exists. It currently includes:
 - deterministic AniList ID/link resolution to MAL IDs when Kavita already has AniList metadata;
 - deterministic source MAL/AniList IDs from Paperback tracker events, including nested
   MangaDex-style `attributes.links` metadata forwarded by Mutsuki Progress Bridge schema v3 events;
+- first-class MangaDex enrichment from a public MangaDex title UUID or share URL, so MangaDex
+  events can recover public `attributes.links` MAL/AniList IDs even when Paperback did not forward
+  those nested fields;
 - first-class WeebCentral enrichment from the public `https://weebcentral.com/series/<id>` detail
   page, with MAL/AniList/MangaUpdates link extraction and successful-result caching;
 - external Paperback candidate discovery from forwarded source metadata, Jikan read-only search,
@@ -137,6 +140,9 @@ Kavita identity exists. It currently includes:
 - monotonic high-water progress updates;
 - offsets and tracking policies;
 - retry/outbox tables for MAL writes;
+- outbox-only manual processing through `POST /api/outbox/process`, so already-captured external
+  Paperback read events can preview or send MAL updates even when optional Kavita polling is
+  unreachable;
 - dry-run processing that previews pending MAL writes without consuming them, so disabling dry-run
   later can push the same queued updates;
 - manual requeue controls for failed outbox items after the operator fixes authorization, settings,
@@ -172,6 +178,10 @@ Live validation on 2026-06-26 against the user's Kavita server confirmed:
 The next hardening pass should improve the Web UI around filtering, searching, and bulk-editing
 mappings. External Paperback read events now feed MAL matching/outbox processing without requiring a
 Kavita match. Missing Kavita mappings do not block external-source MAL tracking.
+
+Kavita polling and MAL outbox processing are intentionally separate. **Run Kavita sync now** polls
+Kavita and may enqueue MAL work when Kavita is reachable. **Process MAL outbox now** only handles
+pending outbox items and is the preferred manual action when testing external source reads.
 
 Official MAL text search is not reliable enough as the only candidate-discovery source. The
 regression title `Chained Soldier` can be absent from official text search results even though

@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { bridgeConfigFromEnv } from "../../apps/kavita-mal-bridge/src/config.js";
 import { createJikanResolver } from "../../apps/kavita-mal-bridge/src/resolvers/jikan-resolver.js";
+import { createMangaDexResolver } from "../../apps/kavita-mal-bridge/src/resolvers/mangadex-resolver.js";
 import { titleVariantsFromExternalEvent } from "../../apps/kavita-mal-bridge/src/resolvers/title-resolver.js";
 import { createWeebCentralResolver } from "../../apps/kavita-mal-bridge/src/resolvers/weebcentral-resolver.js";
 import { SqliteBridgeStore } from "../../apps/kavita-mal-bridge/src/storage.js";
@@ -209,6 +210,83 @@ test("WeebCentral resolver enriches public series page AniList links into MAL ca
       candidates,
     );
     assert.equal(requestedUrls.filter((url) => url.includes("weebcentral.com/series")).length, 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("MangaDex resolver enriches public manga metadata external links into MAL candidates", async () => {
+  const fixture = await resolverFixture();
+  const requestedUrls: string[] = [];
+  const resolver = createMangaDexResolver({
+    config: bridgeConfigFromEnv({ RESOLVER_CACHE_TTL_HOURS: "24" }),
+    store: fixture.store,
+    transport: {
+      fetch: async (url, init) => {
+        requestedUrls.push(url);
+        assert.equal(init?.headers instanceof Headers, false);
+        if (url.includes("api.mangadex.org/manga/b52534a4-9206-43c8-96a7-88e9b0f02c50")) {
+          return new Response(
+            JSON.stringify({
+              data: {
+                id: "b52534a4-9206-43c8-96a7-88e9b0f02c50",
+                type: "manga",
+                attributes: {
+                  title: { en: "Ikinokore! Shachiku-chan" },
+                  altTitles: [{ ja: "いきのこれ！ 社畜ちゃん" }],
+                  links: {
+                    mal: "106075",
+                    al: "99031",
+                  },
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        if (url === "https://graphql.anilist.co") {
+          const body = init?.body;
+          if (typeof body !== "string") throw new Error("Expected AniList GraphQL JSON body.");
+          assert.match(body, /99031/u);
+          return new Response(JSON.stringify({ data: { Media: { idMal: 106075 } } }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected URL ${url}`);
+      },
+    },
+  });
+
+  try {
+    const input = resolverInput({
+      readingSourceId: "MangaDex",
+      readingSourceName: "MangaDex",
+      sourceMangaId: "b52534a4-9206-43c8-96a7-88e9b0f02c50",
+      sourceTitle: "Ikinokore! Shachiku-chan",
+      sourceShareUrl: "https://mangadex.org/title/b52534a4-9206-43c8-96a7-88e9b0f02c50",
+    });
+    const candidates = await resolver.discoverCandidates(input);
+
+    assert.deepEqual(candidates, [
+      {
+        malId: 106075,
+        provenance: [
+          "mangadex-enrichment",
+          "mangadex-mal-id",
+          "mangadex-anilist-id",
+          "mal-direct-lookup",
+        ],
+      },
+    ]);
+    assert.equal(requestedUrls.filter((url) => url.includes("api.mangadex.org/manga")).length, 1);
+    assert.deepEqual(await resolver.discoverCandidates(input), candidates);
+    assert.equal(requestedUrls.filter((url) => url.includes("api.mangadex.org/manga")).length, 1);
+    const diagnostics = await fixture.store.listResolverDiagnostics({
+      readingSourceId: "MangaDex",
+      sourceMangaId: "b52534a4-9206-43c8-96a7-88e9b0f02c50",
+    });
+    assert.ok(diagnostics.some((entry) => entry.resolver === "mangadex" && entry.outcome === "ok"));
   } finally {
     await fixture.cleanup();
   }

@@ -98,9 +98,12 @@ container is reachable.
 
 4. Click **Authorize MAL** from the bridge UI and complete the MAL OAuth prompt.
 
-5. Click **Check readiness**. It should report Kavita configured and MAL authorized.
+5. Click **Check readiness**. MAL should report authorized. Kavita readiness is only required for
+   optional Kavita polling; external Paperback read events can still be matched and sent through the
+   MAL outbox if Kavita is unreachable.
 
-6. Run a manual sync while dry-run is still enabled.
+6. Click **Process MAL outbox now** while dry-run is still enabled to preview already-captured MAL
+   work. Use **Run Kavita sync now** only when you specifically want to poll Kavita progress.
 
 7. Review:
 
@@ -113,7 +116,8 @@ container is reachable.
    - existing mappings and manual overrides
 
 8. Disable dry-run only after the planned MAL updates match what you expect. Dry-run leaves outbox
-   rows pending, so the same queued updates can be pushed after you switch to live writes.
+   rows pending, so the same queued updates can be pushed with **Process MAL outbox now** after you
+   switch to live writes.
 
 ## Safe Operating Rules
 

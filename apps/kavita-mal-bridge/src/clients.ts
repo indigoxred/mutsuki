@@ -180,8 +180,7 @@ export async function checkKavitaReadiness(config: BridgeConfig): Promise<Kavita
     return {
       configured: true,
       ok: false,
-      message:
-        error instanceof Error ? sanitizeReadinessMessage(error.message) : "Kavita check failed.",
+      message: readinessErrorMessage(error, "Kavita check failed."),
     };
   }
 }
@@ -218,8 +217,7 @@ export async function checkMalReadiness(config: BridgeConfig): Promise<MalReadin
       oauthConfigured,
       authorized: true,
       ok: false,
-      message:
-        error instanceof Error ? sanitizeReadinessMessage(error.message) : "MAL check failed.",
+      message: readinessErrorMessage(error, "MAL check failed."),
     };
   }
 }
@@ -683,7 +681,26 @@ function sanitizeReadinessMessage(message: string): string {
   return message
     .replace(/Bearer\s+\S+/giu, "Bearer redacted")
     .replace(/x-api-key[:=]\s*[^&\s"')<>]+/giu, "x-api-key=redacted")
+    .replace(/apiKey=([^&\s"')<>]+)/giu, "apiKey=redacted")
     .slice(0, 200);
+}
+
+function readinessErrorMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof Error)) return fallback;
+  const cause = error.cause;
+  const causeRecord = typeof cause === "object" && cause !== null ? cause : undefined;
+  const causeCode =
+    causeRecord && "code" in causeRecord && typeof causeRecord.code === "string"
+      ? causeRecord.code
+      : undefined;
+  const causeMessage =
+    causeRecord && "message" in causeRecord && typeof causeRecord.message === "string"
+      ? causeRecord.message
+      : undefined;
+  const parts = [error.message, causeCode, causeMessage].filter((part): part is string =>
+    Boolean(part),
+  );
+  return sanitizeReadinessMessage(parts.join(" - "));
 }
 
 async function mapWithConcurrency<T, R>(
