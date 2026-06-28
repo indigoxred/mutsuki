@@ -1,4 +1,17 @@
-export type MatchMethod = "mal-url" | "mal-id" | "external-id" | "title-search" | "manual";
+export type MatchMethod =
+  | "mal-url"
+  | "mal-id"
+  | "external-id"
+  | "source-mal-id"
+  | "source-mal-url"
+  | "source-anilist-id"
+  | "mangadex-mal-id"
+  | "mangadex-anilist-id"
+  | "weebcentral-mal-id"
+  | "weebcentral-anilist-id"
+  | "title-search"
+  | "manual"
+  | "manual-override";
 
 export interface KavitaSeriesCandidate {
   kavitaSeriesId: number;
@@ -35,7 +48,11 @@ export type MatchDecision =
     }
   | {
       status: "review";
-      reason: "no-candidates" | "ambiguous-or-low-confidence";
+      reason:
+        | "no-candidates"
+        | "ambiguous-or-low-confidence"
+        | "exact-title-tie"
+        | "only-weak-token-candidates";
       confidence: number;
       candidates: ScoredMalCandidate[];
     };
@@ -71,7 +88,33 @@ export function matchKavitaSeriesToMal(input: {
   if (!top) {
     return { status: "review", reason: "no-candidates", confidence: 0, candidates: [] };
   }
+  const second = scored[1];
+  if (
+    top.reasons.includes("exact-title") &&
+    second?.reasons.includes("exact-title") &&
+    top.confidence - second.confidence < AUTO_MATCH_MARGIN
+  ) {
+    return {
+      status: "review",
+      reason: "exact-title-tie",
+      confidence: top.confidence,
+      candidates: scored.slice(0, 5),
+    };
+  }
   const runnerUp = scored[1]?.confidence ?? 0;
+  if (
+    top.confidence >= AUTO_MATCH_THRESHOLD &&
+    top.reasons.includes("exact-title") &&
+    !second?.reasons.includes("exact-title")
+  ) {
+    return {
+      status: "matched",
+      malId: top.malId,
+      matchMethod: "title-search",
+      confidence: top.confidence,
+      candidate: top,
+    };
+  }
   if (top.confidence >= AUTO_MATCH_THRESHOLD && top.confidence - runnerUp >= AUTO_MATCH_MARGIN) {
     return {
       status: "matched",
@@ -79,6 +122,14 @@ export function matchKavitaSeriesToMal(input: {
       matchMethod: "title-search",
       confidence: top.confidence,
       candidate: top,
+    };
+  }
+  if (scored.every((candidate) => candidate.strength === "weak")) {
+    return {
+      status: "review",
+      reason: "only-weak-token-candidates",
+      confidence: top.confidence,
+      candidates: scored.slice(0, 5),
     };
   }
   return {
@@ -120,18 +171,21 @@ function scoreCandidate(
 ): ScoredMalCandidate {
   let confidence = 0;
   const reasons: string[] = [];
-  const seriesTitles = [series.title, ...(series.altTitles ?? [])].map(normalizeTitleForMatching);
-  const candidateTitles = [candidate.title, ...(candidate.altTitles ?? [])].map(
-    normalizeTitleForMatching,
-  );
+  const seriesPrimary = normalizeTitleForMatching(series.title);
+  const seriesAltTitles = (series.altTitles ?? []).map(normalizeTitleForMatching);
+  const seriesTitles = [seriesPrimary, ...seriesAltTitles];
+  const candidatePrimary = normalizeTitleForMatching(candidate.title);
+  const candidateAltTitles = (candidate.altTitles ?? []).map(normalizeTitleForMatching);
+  const candidateTitles = [candidatePrimary, ...candidateAltTitles];
 
-  if (hasExactTitle([normalizeTitleForMatching(series.title)], candidateTitles)) {
-    confidence += 0.86;
+  if (seriesPrimary === candidatePrimary) {
+    confidence += 0.89;
     reasons.push("exact-title");
   } else if (
-    hasExactTitle((series.altTitles ?? []).map(normalizeTitleForMatching), candidateTitles)
+    hasExactTitle([seriesPrimary, ...seriesAltTitles], candidateAltTitles) ||
+    hasExactTitle(seriesAltTitles, [candidatePrimary])
   ) {
-    confidence += 0.9;
+    confidence += 0.86;
     reasons.push("exact-alt-title");
   } else {
     const tokenScore = bestTokenScore(seriesTitles, candidateTitles);

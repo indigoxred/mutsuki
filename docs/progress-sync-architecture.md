@@ -117,12 +117,20 @@ Kavita identity exists. It currently includes:
   pre-sync token refresh;
 - deterministic MAL ID/URL matching from existing Kavita external metadata;
 - deterministic AniList ID/link resolution to MAL IDs when Kavita already has AniList metadata;
+- deterministic source MAL/AniList IDs from Paperback tracker events, including nested
+  MangaDex-style `attributes.links` metadata forwarded by Mutsuki Progress Bridge schema v3 events;
+- first-class WeebCentral enrichment from the public `https://weebcentral.com/series/<id>` detail
+  page, with MAL/AniList/MangaUpdates link extraction and successful-result caching;
 - external Paperback candidate discovery from forwarded source metadata, Jikan read-only search,
   public AniList GraphQL search, and official MAL search across title variants;
 - official MAL direct-ID lookup for every discovered candidate before scoring or writing;
-- high-confidence fallback title and alternate-title matching;
+- high-confidence fallback title and alternate-title matching, where exact primary-title evidence
+  outranks exact alternate-title noise and genuine exact-primary ties remain unresolved;
 - unresolved match review, manual approval, manual ignore/restore, and existing-mapping override
   UI/API with persisted Kavita titles on mapping rows;
+- retry-resolution and explicit no-MAL-entry actions for external unresolved rows;
+- resolver diagnostics in SQLite so failures, rate limits, parse errors, cache hits, and zero-result
+  outcomes remain distinguishable;
 - lightweight Kavita readiness checks and MAL OAuth authorization checks without mutating progress;
 - a bounded Kavita observed-progress preview endpoint/UI for validating progress extraction before
   MAL OAuth is authorized;
@@ -172,6 +180,13 @@ official direct lookup for MAL `116880` returns `Mato Seihei no Slave` with Engl
 hydrates and validates every discovered ID through the official MAL API before automatic mapping or
 MAL outbox work. Weak candidates based only on shared generic tokens are labelled as weak
 suggestions and are not pre-filled as manual approvals.
+
+WeebCentral is treated as a core supported source. The bridge derives a canonical series page from
+the forwarded source share URL or WeebCentral series ID, fetches that public page without cookies,
+and uses public external links as deterministic evidence. If WeebCentral exposes an AniList link,
+the bridge resolves AniList `idMal`, validates that MAL ID through the official MAL API, and maps it
+without falling through to weak fuzzy results. Resolver failures are not cached as empty matches; a
+retry-resolution action clears resolver caches for a fresh attempt.
 
 Default policies:
 

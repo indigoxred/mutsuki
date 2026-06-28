@@ -76,6 +76,154 @@ test("external Paperback read event auto-links high-confidence MAL match and que
   }
 });
 
+test("external MangaDex deterministic MAL ID validates and auto-maps without fuzzy approval", async () => {
+  const fixture = await createFixture();
+  const searchedTitles: string[] = [];
+  const hydratedIds: number[] = [];
+  const mal: ExternalReadEventMalClient = {
+    searchManga: async (series) => {
+      searchedTitles.push(series.title);
+      return [{ malId: 111, title: "Wrong Search Result", mediaType: "manga" }];
+    },
+    getMangaById: async (malId) => {
+      hydratedIds.push(malId);
+      return malId === 99819
+        ? {
+            malId: 99819,
+            title: "Ikinokore! Shachiku-chan",
+            altTitles: ["Survive! Company Slave-chan"],
+            mediaType: "manga",
+          }
+        : undefined;
+    },
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => {
+      throw new Error("dry-run processing must not call MAL writes directly");
+    },
+  };
+
+  try {
+    await fixture.store.enqueueExternalReview({
+      readingSourceId: "MangaDex",
+      sourceMangaId: "b52534a4-9206-43c8-96a7-88e9b0f02c50",
+      readingSourceName: "MangaDex",
+      title: "Ikinokore! Shachiku-chan",
+      reason: "ambiguous-or-low-confidence",
+      candidatesJson: "[]",
+    });
+    const result = await processExternalReadEvent({
+      store: fixture.store,
+      mal,
+      event: externalEvent({
+        schemaVersion: 3,
+        readingSourceId: "MangaDex",
+        readingSourceName: "MangaDex",
+        sourceMangaId: "b52534a4-9206-43c8-96a7-88e9b0f02c50",
+        sourceTitle: "Ikinokore! Shachiku-chan",
+        sourcePrimaryTitle: "Ikinokore! Shachiku-chan",
+        sourceExternalIds: {
+          mal: "99819",
+          al: "97451",
+        },
+      }),
+      policy: {
+        ...DEFAULT_SOURCE_POLICY,
+        readingSourceId: "MangaDex",
+        readingSourceName: "MangaDex",
+      },
+    });
+
+    assert.equal(result.status, "queued");
+    assert.deepEqual(searchedTitles, []);
+    assert.deepEqual(hydratedIds, [99819]);
+    assert.equal((await fixture.store.listExternalReviews()).length, 0);
+    const mapping = (await fixture.store.listExternalSeriesMappings())[0];
+    assert.equal(mapping?.malId, 99819);
+    assert.equal(mapping?.matchMethod, "mangadex-mal-id");
+    assert.equal(mapping?.confidence, 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("external WeebCentral deterministic AniList enrichment validates MAL ID and clears stale review", async () => {
+  const fixture = await createFixture();
+  const hydratedIds: number[] = [];
+  const mal: ExternalReadEventMalClient = {
+    searchManga: async () => [{ malId: 157541, title: "Chiisai Boku no Haru", mediaType: "manga" }],
+    getMangaById: async (malId) => {
+      hydratedIds.push(malId);
+      return malId === 182880
+        ? {
+            malId: 182880,
+            title: "Ookii Mukimuki Chiisai Muchimuchi",
+            altTitles: ["Ookii Muki Muki Chiisai Muchi Muchi"],
+            mediaType: "manga",
+          }
+        : undefined;
+    },
+    getCurrentProgress: async () => ({
+      chaptersRead: 0,
+      volumesRead: 0,
+      status: "plan_to_read",
+    }),
+    updateProgress: async () => {
+      throw new Error("dry-run processing must not call MAL writes directly");
+    },
+  };
+  const resolver: ExternalTitleResolver = {
+    discoverCandidates: async () => [
+      {
+        malId: 182880,
+        provenance: ["weebcentral-enrichment", "weebcentral-anilist-id", "mal-direct-lookup"],
+      },
+    ],
+  };
+
+  try {
+    await fixture.store.enqueueExternalReview({
+      readingSourceId: "WeebCentral",
+      sourceMangaId: "01K4D06VAMY7PGK8HVKY3CCGTS",
+      readingSourceName: "WeebCentral",
+      title: "Ookii Muki Muki Chiisai Muchi Muchi",
+      reason: "ambiguous-or-low-confidence",
+      candidatesJson: "[]",
+    });
+    const result = await processExternalReadEvent({
+      store: fixture.store,
+      mal,
+      resolver,
+      event: externalEvent({
+        schemaVersion: 3,
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+        sourceMangaId: "01K4D06VAMY7PGK8HVKY3CCGTS",
+        sourceTitle: "Ookii Muki Muki Chiisai Muchi Muchi",
+        sourcePrimaryTitle: "Ookii Muki Muki Chiisai Muchi Muchi",
+        sourceShareUrl: "https://weebcentral.com/series/01K4D06VAMY7PGK8HVKY3CCGTS",
+      }),
+      policy: {
+        ...DEFAULT_SOURCE_POLICY,
+        readingSourceId: "WeebCentral",
+        readingSourceName: "WeebCentral",
+      },
+    });
+
+    assert.equal(result.status, "queued");
+    assert.ok(hydratedIds.includes(182880));
+    assert.equal((await fixture.store.listExternalReviews()).length, 0);
+    const mapping = (await fixture.store.listExternalSeriesMappings())[0];
+    assert.equal(mapping?.malId, 182880);
+    assert.equal(mapping?.matchMethod, "weebcentral-anilist-id");
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("external Chained Soldier event auto-links through resolver discovery when official MAL search misses it", async () => {
   const fixture = await createFixture();
   const searchedTitles: string[] = [];

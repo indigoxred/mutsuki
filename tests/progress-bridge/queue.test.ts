@@ -103,7 +103,15 @@ test("progress bridge tracker forwards safe schema v3 manga metadata", async () 
         sourceThumbnailUrl:
           "https://imgs-2.2xstorage.com/thumb/ookii-onnanoko-wa-daisuki-desu-ka.webp?apiKey=secret",
         sourceAdditionalInfo: {
-          anilist: "141821",
+          attributes: {
+            links: {
+              mal: "116880",
+              al: "141821",
+            },
+          },
+          links: {
+            mu: "series-slug",
+          },
           bearerToken: "secret-token",
           safeSlug: "chained-soldier",
         },
@@ -128,8 +136,11 @@ test("progress bridge tracker forwards safe schema v3 manga metadata", async () 
     events[0]?.sourceThumbnailUrl,
     "https://imgs-2.2xstorage.com/thumb/ookii-onnanoko-wa-daisuki-desu-ka.webp?apiKey=redacted",
   );
-  assert.equal(events[0]?.sourceExternalIds.anilist, "141821");
+  assert.equal(events[0]?.sourceExternalIds.mal, "116880");
+  assert.equal(events[0]?.sourceExternalIds.al, "141821");
+  assert.equal(events[0]?.sourceExternalIds.mangaupdates, "series-slug");
   assert.equal(events[0]?.sourceExternalIds.bearerToken, undefined);
+  assert.ok(events[0]?.sourceOriginalMetadataJson);
   assert.doesNotMatch(JSON.stringify(events[0]), /secret-token|apiKey=secret/u);
 });
 
@@ -245,7 +256,7 @@ function action(input: {
   sourceArtist?: string;
   sourceShareUrl?: string;
   sourceThumbnailUrl?: string;
-  sourceAdditionalInfo?: Record<string, string>;
+  sourceAdditionalInfo?: Record<string, unknown>;
   chapterTitle?: string;
   additionalInfo?: Record<string, string>;
 }): TrackedMangaChapterReadAction {
@@ -256,7 +267,10 @@ function action(input: {
   sourceMangaForChapter.mangaInfo.artist = input.sourceArtist;
   sourceMangaForChapter.mangaInfo.shareUrl = input.sourceShareUrl;
   sourceMangaForChapter.mangaInfo.thumbnailUrl = input.sourceThumbnailUrl ?? "";
-  sourceMangaForChapter.mangaInfo.additionalInfo = input.sourceAdditionalInfo;
+  sourceMangaForChapter.mangaInfo.additionalInfo = input.sourceAdditionalInfo as Record<
+    string,
+    string
+  >;
   const readChapter: Chapter = {
     chapterId: input.chapterId,
     sourceManga: sourceMangaForChapter,

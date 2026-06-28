@@ -7,6 +7,7 @@ import test from "node:test";
 import { bridgeConfigFromEnv } from "../../apps/kavita-mal-bridge/src/config.js";
 import { createJikanResolver } from "../../apps/kavita-mal-bridge/src/resolvers/jikan-resolver.js";
 import { titleVariantsFromExternalEvent } from "../../apps/kavita-mal-bridge/src/resolvers/title-resolver.js";
+import { createWeebCentralResolver } from "../../apps/kavita-mal-bridge/src/resolvers/weebcentral-resolver.js";
 import { SqliteBridgeStore } from "../../apps/kavita-mal-bridge/src/storage.js";
 
 test("Jikan resolver caches candidate discovery by normalized query", async () => {
@@ -95,3 +96,171 @@ test("title variants include safe thumbnail URL slugs without image extensions",
   assert.ok(variants.includes("ookii onnanoko wa daisuki desu ka"));
   assert.ok(!variants.some((variant) => variant.includes(".webp")));
 });
+
+test("Jikan resolver does not cache retryable failures as empty results", async () => {
+  const fixture = await resolverFixture();
+  let fetchCount = 0;
+  const resolver = createJikanResolver({
+    config: bridgeConfigFromEnv({
+      RESOLVER_CACHE_TTL_HOURS: "24",
+      RESOLVER_MAX_CANDIDATES_PER_QUERY: "5",
+    }),
+    store: fixture.store,
+    transport: {
+      fetch: async () => {
+        fetchCount += 1;
+        return fetchCount === 1
+          ? new Response("rate limit", { status: 429 })
+          : new Response(JSON.stringify({ data: [{ mal_id: 116880 }] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            });
+      },
+    },
+  });
+
+  try {
+    const input = resolverInput();
+    assert.deepEqual(await resolver.discoverCandidates(input), []);
+    assert.deepEqual(await resolver.discoverCandidates(input), [
+      { malId: 116880, provenance: ["jikan-search"] },
+    ]);
+    assert.equal(fetchCount, 2);
+    const diagnostics = await fixture.store.listResolverDiagnostics({
+      readingSourceId: "WeebCentral",
+      sourceMangaId: "01J76XYCVRSNNY2C2QH721967B",
+    });
+    assert.ok(diagnostics.some((entry) => entry.outcome === "rate-limited"));
+    assert.ok(diagnostics.some((entry) => entry.outcome === "ok"));
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("WeebCentral resolver enriches public series page AniList links into MAL candidates", async () => {
+  const fixture = await resolverFixture();
+  const requestedUrls: string[] = [];
+  const resolver = createWeebCentralResolver({
+    config: bridgeConfigFromEnv({ RESOLVER_CACHE_TTL_HOURS: "24" }),
+    store: fixture.store,
+    transport: {
+      fetch: async (url, init) => {
+        requestedUrls.push(url);
+        if (url.includes("weebcentral.com/series/01K4D06VAMY7PGK8HVKY3CCGTS")) {
+          assert.equal(init?.headers instanceof Headers, false);
+          return new Response(
+            `<!doctype html><html><head>
+              <link rel="canonical" href="https://weebcentral.com/series/01K4D06VAMY7PGK8HVKY3CCGTS/ookii-muki-muki-chiisai-muchi-muchi">
+              <meta property="og:title" content="Ookii Muki Muki Chiisai Muchi Muchi | Weeb Central">
+            </head><body>
+              <h1>Ookii Muki Muki Chiisai Muchi Muchi</h1>
+              <span><strong>Author(s): </strong><a>HINOHARA Fuki</a></span>
+              <a href="https://anilist.co/manga/195696">AniList</a>
+              <a href="https://www.mangaupdates.com/series/umsaqer">MangaUpdates</a>
+              <p class="whitespace-pre-wrap">Synthetic description only.</p>
+            </body></html>`,
+            { status: 200, headers: { "Content-Type": "text/html" } },
+          );
+        }
+        if (url === "https://graphql.anilist.co") {
+          const body = init?.body;
+          if (typeof body !== "string") throw new Error("Expected AniList GraphQL JSON body.");
+          assert.match(body, /195696/u);
+          return new Response(
+            JSON.stringify({
+              data: {
+                Media: {
+                  idMal: 182880,
+                },
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        throw new Error(`unexpected URL ${url}`);
+      },
+    },
+  });
+
+  try {
+    const candidates = await resolver.discoverCandidates(
+      resolverInput({
+        sourceMangaId: "01K4D06VAMY7PGK8HVKY3CCGTS",
+        sourceTitle: "Ookii Muki Muki Chiisai Muchi Muchi",
+        sourceShareUrl: "https://weebcentral.com/series/01K4D06VAMY7PGK8HVKY3CCGTS",
+      }),
+    );
+
+    assert.deepEqual(candidates, [
+      {
+        malId: 182880,
+        provenance: ["weebcentral-enrichment", "weebcentral-anilist-id", "mal-direct-lookup"],
+      },
+    ]);
+    assert.equal(requestedUrls.filter((url) => url.includes("weebcentral.com/series")).length, 1);
+    assert.deepEqual(
+      await resolver.discoverCandidates(
+        resolverInput({
+          sourceMangaId: "01K4D06VAMY7PGK8HVKY3CCGTS",
+          sourceTitle: "Ookii Muki Muki Chiisai Muchi Muchi",
+          sourceShareUrl: "https://weebcentral.com/series/01K4D06VAMY7PGK8HVKY3CCGTS",
+        }),
+      ),
+      candidates,
+    );
+    assert.equal(requestedUrls.filter((url) => url.includes("weebcentral.com/series")).length, 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+async function resolverFixture(): Promise<{
+  store: SqliteBridgeStore;
+  cleanup: () => Promise<void>;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-resolvers-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  return {
+    store,
+    cleanup: async () => {
+      store.close();
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+function resolverInput(
+  overrides: Partial<Parameters<typeof titleVariantsFromExternalEvent>[0]> = {},
+) {
+  const event = {
+    schemaVersion: 3 as const,
+    eventSource: "paperback-progress-bridge" as const,
+    readingSourceId: "WeebCentral",
+    readingSourceName: "WeebCentral",
+    readingSourceKind: "external" as const,
+    actionId: "read-1",
+    occurredAt: "2026-06-28T00:00:00.000Z",
+    receivedAt: "2026-06-28T00:00:01.000Z",
+    sourceMangaId: "01J76XYCVRSNNY2C2QH721967B",
+    sourceChapterId: "chapter-1",
+    sourceTitle: "Chained Soldier",
+    sourceChapterNumber: 1,
+    chapterKind: "manga" as const,
+    rawEventJson: "{}",
+    ...overrides,
+  };
+  return {
+    event,
+    series: {
+      kavitaSeriesId: -1,
+      title: event.sourceTitle,
+      contentType: "manga" as const,
+      mediaType: "manga" as const,
+      webLinks: event.sourceShareUrl ? [event.sourceShareUrl] : undefined,
+      externalIds: event.sourceExternalIds,
+      isSpecial: false,
+    },
+    titleVariants: titleVariantsFromExternalEvent(event),
+  };
+}

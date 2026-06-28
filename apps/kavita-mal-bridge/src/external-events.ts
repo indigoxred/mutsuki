@@ -148,7 +148,13 @@ async function createExternalMappingOrReview(input: {
 > {
   const series = observedSeriesFromExternalEvent(input.event);
   const titleVariants = titleVariantsFromExternalEvent(input.event);
-  const officialCandidates = await searchOfficialCandidates(input.mal, series, titleVariants);
+  const deterministic = await validatedDeterministicMatch(input, series);
+  if (deterministic) {
+    return {
+      status: "mapped",
+      mapping: await saveExternalMapping(input, deterministic),
+    };
+  }
   const discoveredCandidates =
     titleVariants.length > 0
       ? await input.resolver
@@ -159,6 +165,14 @@ async function createExternalMappingOrReview(input: {
           })
           .catch(() => [])
       : [];
+  const discoveredDeterministic = await validatedResolverMatch(input, discoveredCandidates ?? []);
+  if (discoveredDeterministic) {
+    return {
+      status: "mapped",
+      mapping: await saveExternalMapping(input, discoveredDeterministic),
+    };
+  }
+  const officialCandidates = await searchOfficialCandidates(input.mal, series, titleVariants);
   const searchCandidates = await hydrateAndMergeCandidates({
     officialCandidates,
     discoveredCandidates: discoveredCandidates ?? [],
@@ -185,15 +199,36 @@ async function createExternalMappingOrReview(input: {
     return { status: "review", reason: decision.reason };
   }
 
+  return {
+    status: "mapped",
+    mapping: await saveExternalMapping(input, {
+      malId: decision.malId,
+      matchMethod: decision.matchMethod,
+      confidence: decision.confidence,
+    }),
+  };
+}
+
+async function saveExternalMapping(
+  input: {
+    store: SqliteBridgeStore;
+    event: BridgeReadEventRecord;
+  },
+  match: {
+    malId: number;
+    matchMethod: ExternalSeriesMappingRecord["matchMethod"];
+    confidence: number;
+  },
+): Promise<ExternalSeriesMappingRecord> {
   const policy = defaultTrackingPolicyForSeries("manga");
   const mapping: ExternalSeriesMappingRecord = {
     readingSourceId: input.event.readingSourceId,
     sourceMangaId: input.event.sourceMangaId,
     readingSourceName: input.event.readingSourceName,
     title: externalTitle(input.event),
-    malId: decision.malId,
-    matchMethod: decision.matchMethod,
-    confidence: decision.confidence,
+    malId: match.malId,
+    matchMethod: match.matchMethod,
+    confidence: match.confidence,
     locked: false,
     chapterOffset: policy.chapterOffset,
     volumeOffset: policy.volumeOffset,
@@ -207,14 +242,14 @@ async function createExternalMappingOrReview(input: {
   await input.store.deleteExternalReview(input.event.readingSourceId, input.event.sourceMangaId);
   await input.store.audit({
     type: "match",
-    message: `Auto-linked external source title to MAL ${decision.malId} via ${decision.matchMethod}.`,
+    message: `Auto-linked external source title to MAL ${match.malId} via ${match.matchMethod}.`,
     dataJson: JSON.stringify({
       ...eventAuditData(input.event),
-      malId: decision.malId,
-      confidence: decision.confidence,
+      malId: match.malId,
+      confidence: match.confidence,
     }),
   });
-  return { status: "mapped", mapping };
+  return mapping;
 }
 
 function observedSeriesFromExternalEvent(event: BridgeReadEventRecord): BridgeObservedSeries {
@@ -235,6 +270,178 @@ function observedSeriesFromExternalEvent(event: BridgeReadEventRecord): BridgeOb
     completedVolume: event.sourceChapterVolume,
     isSpecial: false,
   };
+}
+
+async function validatedDeterministicMatch(
+  input: {
+    mal: ExternalReadEventMalClient;
+    event: BridgeReadEventRecord;
+  },
+  series: BridgeObservedSeries,
+): Promise<
+  | {
+      malId: number;
+      matchMethod: ExternalSeriesMappingRecord["matchMethod"];
+      confidence: number;
+    }
+  | undefined
+> {
+  const malId = deterministicMalIdFromSeries(series);
+  if (malId !== undefined) {
+    const hydrated = await input.mal.getMangaById?.(malId).catch(() => undefined);
+    if (hydrated) {
+      return {
+        malId,
+        matchMethod: methodForSource(input.event.readingSourceId, "mal-id"),
+        confidence: 1,
+      };
+    }
+  }
+
+  const aniListId = deterministicAniListIdFromSeries(series);
+  if (aniListId !== undefined) {
+    const resolvedMalId = await resolveAniListMalId(aniListId).catch(() => undefined);
+    const hydrated =
+      resolvedMalId === undefined
+        ? undefined
+        : await input.mal.getMangaById?.(resolvedMalId).catch(() => undefined);
+    if (resolvedMalId !== undefined && hydrated) {
+      return {
+        malId: resolvedMalId,
+        matchMethod: methodForSource(input.event.readingSourceId, "anilist-id"),
+        confidence: 1,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+async function validatedResolverMatch(
+  input: {
+    mal: ExternalReadEventMalClient;
+  },
+  discoveredCandidates: { malId: number; provenance: string[] }[],
+): Promise<
+  | {
+      malId: number;
+      matchMethod: ExternalSeriesMappingRecord["matchMethod"];
+      confidence: number;
+    }
+  | undefined
+> {
+  for (const candidate of discoveredCandidates) {
+    const method = deterministicMethodFromProvenance(candidate.provenance);
+    if (!method) continue;
+    const hydrated = await input.mal.getMangaById?.(candidate.malId).catch(() => undefined);
+    if (hydrated) {
+      return {
+        malId: candidate.malId,
+        matchMethod: method,
+        confidence: 1,
+      };
+    }
+  }
+  return undefined;
+}
+
+function deterministicMalIdFromSeries(series: BridgeObservedSeries): number | undefined {
+  const direct = positiveIntegerFromUnknown(
+    series.externalIds?.mal ??
+      series.externalIds?.myanimelist ??
+      series.externalIds?.myAnimeList ??
+      series.externalIds?.malId,
+  );
+  if (direct !== undefined) return direct;
+  for (const value of externalIdValues(series.externalIds)) {
+    const match = /myanimelist\.net\/manga\/(\d+)/iu.exec(value);
+    const id = positiveIntegerFromUnknown(match?.[1]);
+    if (id !== undefined) return id;
+  }
+  for (const link of series.webLinks ?? []) {
+    const match = /myanimelist\.net\/manga\/(\d+)/iu.exec(link);
+    const id = positiveIntegerFromUnknown(match?.[1]);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
+function deterministicAniListIdFromSeries(series: BridgeObservedSeries): number | undefined {
+  const direct = positiveIntegerFromUnknown(
+    series.externalIds?.anilist ?? series.externalIds?.aniList ?? series.externalIds?.al,
+  );
+  if (direct !== undefined) return direct;
+  for (const value of externalIdValues(series.externalIds)) {
+    const match = /anilist\.co\/manga\/(\d+)/iu.exec(value);
+    const id = positiveIntegerFromUnknown(match?.[1]);
+    if (id !== undefined) return id;
+  }
+  for (const link of series.webLinks ?? []) {
+    const match = /anilist\.co\/manga\/(\d+)/iu.exec(link);
+    const id = positiveIntegerFromUnknown(match?.[1]);
+    if (id !== undefined) return id;
+  }
+  return undefined;
+}
+
+async function resolveAniListMalId(aniListId: number): Promise<number | undefined> {
+  const response = await fetch("https://graphql.anilist.co", {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query: "query ($id: Int) { Media(id: $id, type: MANGA) { idMal } }",
+      variables: { id: aniListId },
+    }),
+  });
+  if (!response.ok) return undefined;
+  const json = (await response.json()) as unknown;
+  const data = isRecord(json) ? json.data : undefined;
+  const media = isRecord(data) && isRecord(data.Media) ? data.Media : undefined;
+  return positiveIntegerFromUnknown(media?.idMal);
+}
+
+function deterministicMethodFromProvenance(
+  provenance: string[],
+): ExternalSeriesMappingRecord["matchMethod"] | undefined {
+  const sources = new Set(provenance);
+  if (sources.has("weebcentral-mal-id")) return "weebcentral-mal-id";
+  if (sources.has("weebcentral-anilist-id")) return "weebcentral-anilist-id";
+  if (sources.has("mangadex-mal-id")) return "mangadex-mal-id";
+  if (sources.has("mangadex-anilist-id")) return "mangadex-anilist-id";
+  if (sources.has("source-mal-id")) return "source-mal-id";
+  if (sources.has("source-anilist-id")) return "source-anilist-id";
+  return undefined;
+}
+
+function methodForSource(
+  readingSourceId: string,
+  kind: "mal-id" | "anilist-id",
+): ExternalSeriesMappingRecord["matchMethod"] {
+  if (/mangadex/iu.test(readingSourceId)) {
+    return kind === "mal-id" ? "mangadex-mal-id" : "mangadex-anilist-id";
+  }
+  if (/weeb\s*central|weebcentral/iu.test(readingSourceId)) {
+    return kind === "mal-id" ? "weebcentral-mal-id" : "weebcentral-anilist-id";
+  }
+  return kind === "mal-id" ? "source-mal-id" : "source-anilist-id";
+}
+
+function externalIdValues(ids: Record<string, string | number | undefined> | undefined): string[] {
+  return Object.values(ids ?? {}).flatMap((value) => (typeof value === "string" ? [value] : []));
+}
+
+function positiveIntegerFromUnknown(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return value;
+  if (typeof value !== "string") return undefined;
+  const parsed = Number(value.trim());
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function externalTitle(event: BridgeReadEventRecord): string {

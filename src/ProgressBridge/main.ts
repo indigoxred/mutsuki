@@ -32,7 +32,7 @@ type ProgressBridgeImplementation = Extension &
   SettingsFormProviding &
   MangaProgressProviding;
 
-const PROGRESS_BRIDGE_VERSION = "0.1.6";
+const PROGRESS_BRIDGE_VERSION = "0.1.7";
 const PROGRESS_BRIDGE_ICON_URL =
   "https://indigoxred.github.io/mutsuki/ProgressBridge/static/icon.png";
 
@@ -376,8 +376,7 @@ function progressBridgeEventFromAction(
     sourceShareUrl: safeUrlString(mangaInfo?.shareUrl),
     sourceThumbnailUrl: safeUrlString(mangaInfo?.thumbnailUrl),
     sourceExternalIds: externalIds,
-    sourceOriginalMetadataJson:
-      Object.keys(externalIds).length > 0 ? safeMetadataJson(mangaInfo?.additionalInfo) : undefined,
+    sourceOriginalMetadataJson: safeMetadataJson(mangaInfo?.additionalInfo),
   };
 }
 
@@ -514,20 +513,56 @@ function safeUrlString(value: unknown): string | undefined {
 function safeExternalIds(value: unknown): Record<string, string | number> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
   const ids: Record<string, string | number> = {};
-  for (const [key, item] of Object.entries(value).slice(0, 50)) {
-    if (isSecretKey(key)) continue;
-    if (typeof item === "number" && Number.isFinite(item)) {
-      ids[safeExternalIdKey(key)] = item;
-    } else if (typeof item === "string" && item.trim()) {
-      ids[safeExternalIdKey(key)] = redactSecretText(item).slice(0, 500);
+  const visit = (record: Record<string, unknown>, prefix = "", depth = 0): void => {
+    if (depth > 3) return;
+    for (const [key, item] of Object.entries(record).slice(0, 80)) {
+      if (isSecretKey(key)) continue;
+      const safeKey = safeExternalIdKey(prefix ? `${prefix}.${key}` : key);
+      const canonicalKey = canonicalExternalIdKey(key);
+      if (typeof item === "number" && Number.isFinite(item) && canonicalKey) {
+        ids[canonicalKey] = item;
+        continue;
+      }
+      if (typeof item === "string" && item.trim()) {
+        const redacted = redactSecretText(item).slice(0, 500);
+        if (canonicalKey || looksLikeExternalLink(redacted)) {
+          ids[canonicalKey ?? safeKey] = redacted;
+        }
+        continue;
+      }
+      if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+        visit(item as Record<string, unknown>, isContainerKey(key) ? "" : safeKey, depth + 1);
+      }
     }
-  }
+  };
+  visit(value as Record<string, unknown>);
   return ids;
 }
 
 function safeMetadataJson(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
-  return JSON.stringify(safeExternalIds(value)).slice(0, 4000);
+  const metadata = safeMetadataValue(value, 0);
+  if (metadata === undefined) return undefined;
+  return JSON.stringify(metadata).slice(0, 4000);
+}
+
+function safeMetadataValue(value: unknown, depth: number): unknown {
+  if (depth > 4) return undefined;
+  if (typeof value === "string") return redactSecretText(value).slice(0, 500);
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 40)
+      .map((item) => safeMetadataValue(item, depth + 1))
+      .filter((item) => item !== undefined);
+  }
+  if (typeof value !== "object" || value === null) return undefined;
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value).slice(0, 80)) {
+    if (isSecretKey(key)) continue;
+    const safe = safeMetadataValue(item, depth + 1);
+    if (safe !== undefined) output[safeExternalIdKey(key)] = safe;
+  }
+  return Object.keys(output).length > 0 ? output : undefined;
 }
 
 function redactSecretText(value: string): string {
@@ -544,6 +579,35 @@ function isSecretKey(key: string): boolean {
 
 function safeExternalIdKey(key: string): string {
   return key.replace(/[^\w.-]+/gu, "_").slice(0, 80);
+}
+
+function canonicalExternalIdKey(key: string): string | undefined {
+  const normalized = key.replace(/[^\w]+/gu, "").toLowerCase();
+  if (normalized === "mal" || normalized === "myanimelist" || normalized === "myanimelistid") {
+    return "mal";
+  }
+  if (normalized === "al" || normalized === "anilist" || normalized === "anilistid") {
+    return "al";
+  }
+  if (normalized === "mu" || normalized === "mangaupdates" || normalized === "mangaupdatesid") {
+    return "mangaupdates";
+  }
+  if (normalized === "kitsu" || normalized === "kitsuio") return "kitsu";
+  if (normalized === "animeplanet") return "animeplanet";
+  if (normalized === "isbn" || normalized === "isbn10" || normalized === "isbn13") {
+    return normalized;
+  }
+  return undefined;
+}
+
+function isContainerKey(key: string): boolean {
+  return /^(?:attributes|links|external.?links|external.?ids|ids|metadata)$/iu.test(key);
+}
+
+function looksLikeExternalLink(value: string): boolean {
+  return /https?:\/\/(?:www\.)?(?:myanimelist\.net|anilist\.co|mangaupdates\.com|kitsu\.io|anime-planet\.com)\//iu.test(
+    value,
+  );
 }
 
 const paperbackProgressBridgeTransport: ProgressBridgeTransport = async (request) => {

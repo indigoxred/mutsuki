@@ -24,6 +24,7 @@ import {
 import { createAnilistResolver } from "./resolvers/anilist-resolver.js";
 import { createJikanResolver } from "./resolvers/jikan-resolver.js";
 import { composeTitleResolvers } from "./resolvers/title-resolver.js";
+import { createWeebCentralResolver } from "./resolvers/weebcentral-resolver.js";
 import type { BridgeTrackingMode } from "./policy.js";
 import {
   assertBridgeSyncReady,
@@ -44,6 +45,7 @@ import {
   type ExternalReviewRecord,
   type ExternalSeriesMappingRecord,
   type SeriesMappingRecord,
+  type WeebCentralMetricsRecord,
 } from "./storage.js";
 import type { ScoredMalCandidate } from "./matching.js";
 
@@ -81,6 +83,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         const outbox = await options.store.outboxCounts();
         const externalReviews = await options.store.listExternalReviews();
         const externalIgnored = await options.store.listExternalIgnoredSeries();
+        const weebCentral = await options.store.weebCentralMetrics();
         await respondJson(response, {
           dryRun: settingBoolean(settings.dryRun, options.dryRun),
           showKavitaSyncPanels: settingBoolean(settings.showKavitaSyncPanels, false),
@@ -98,6 +101,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           readEvents: await options.store.readEventCount(),
           sourcePolicies: (await options.store.listSourcePolicies()).length,
           outbox,
+          weebCentral,
           scheduler: schedulerStatus(options),
           audit: (await options.store.listAuditLogs(25)).slice(0, 10),
         });
@@ -202,12 +206,26 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/external-unresolved-matches") {
-        const items = (await options.store.listExternalReviews()).map(externalReviewResponseItem);
+        const items = await Promise.all(
+          (await options.store.listExternalReviews()).map(async (review) =>
+            externalReviewResponseItem(
+              review,
+              await options.store.listResolverDiagnostics({
+                readingSourceId: review.readingSourceId,
+                sourceMangaId: review.sourceMangaId,
+                limit: 20,
+              }),
+            ),
+          ),
+        );
         await respondJson(response, { items });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/ignored-series") {
-        await respondJson(response, { items: await options.store.listIgnoredSeries() });
+        await respondJson(response, {
+          items: await options.store.listIgnoredSeries(),
+          externalItems: await options.store.listExternalIgnoredSeries(),
+        });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/audit-log") {
@@ -393,6 +411,66 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         await respondJson(response, { ok: true });
         return;
       }
+      const noMalEntryExternalMatch =
+        /^\/api\/external-unresolved-matches\/([^/]+)\/([^/]+)\/no-mal-entry$/u.exec(url.pathname);
+      if (request.method === "POST" && noMalEntryExternalMatch?.[1] && noMalEntryExternalMatch[2]) {
+        const readingSourceId = decodeURIComponent(noMalEntryExternalMatch[1]);
+        const sourceMangaId = decodeURIComponent(noMalEntryExternalMatch[2]);
+        const review = await options.store.getExternalReview(readingSourceId, sourceMangaId);
+        await options.store.ignoreExternalSeries({
+          readingSourceId,
+          sourceMangaId,
+          readingSourceName: review?.readingSourceName ?? readingSourceId,
+          title: review?.title ?? `${readingSourceId} ${sourceMangaId}`,
+          reason: "no-mal-entry",
+        });
+        await options.store.deleteExternalReview(readingSourceId, sourceMangaId);
+        await options.store.audit({
+          type: "review",
+          message: "External source title marked as having no MAL entry.",
+          dataJson: JSON.stringify({
+            readingSourceId,
+            sourceMangaId,
+          }),
+        });
+        await respondJson(response, { ok: true });
+        return;
+      }
+      const retryExternalMatch =
+        /^\/api\/external-unresolved-matches\/([^/]+)\/([^/]+)\/retry-resolution$/u.exec(
+          url.pathname,
+        );
+      if (request.method === "POST" && retryExternalMatch?.[1] && retryExternalMatch[2]) {
+        const readingSourceId = decodeURIComponent(retryExternalMatch[1]);
+        const sourceMangaId = decodeURIComponent(retryExternalMatch[2]);
+        const event = await options.store.getLatestReadEvent(readingSourceId, sourceMangaId);
+        if (!event) {
+          await respondJson(
+            response,
+            { error: "No read event exists for this external title." },
+            404,
+          );
+          return;
+        }
+        if (!options.processReadEvent) {
+          await respondJson(response, { error: "Read-event processing is not configured." }, 409);
+          return;
+        }
+        await options.store.clearResolverCache();
+        const policy = await options.store.ensureSourcePolicy(defaultSourcePolicyForEvent(event));
+        const processing = await processReadEventSafely(options, event, policy);
+        await options.store.audit({
+          type: "review",
+          message: "Manual retry resolution requested for external source title.",
+          dataJson: JSON.stringify({
+            readingSourceId,
+            sourceMangaId,
+            processing,
+          }),
+        });
+        await respondJson(response, { ok: true, processing });
+        return;
+      }
       const ignoreMatch = /^\/api\/unresolved-matches\/(\d+)\/ignore$/u.exec(url.pathname);
       if (request.method === "POST" && ignoreMatch?.[1]) {
         const kavitaSeriesId = Number(ignoreMatch[1]);
@@ -421,6 +499,20 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           type: "review",
           kavitaSeriesId,
           message: "Manually ignored series restored to sync eligibility.",
+        });
+        await respondJson(response, { ok: true });
+        return;
+      }
+      const restoreExternalIgnored =
+        /^\/api\/external-ignored-series\/([^/]+)\/([^/]+)\/restore$/u.exec(url.pathname);
+      if (request.method === "POST" && restoreExternalIgnored?.[1] && restoreExternalIgnored[2]) {
+        const readingSourceId = decodeURIComponent(restoreExternalIgnored[1]);
+        const sourceMangaId = decodeURIComponent(restoreExternalIgnored[2]);
+        await options.store.restoreExternalIgnoredSeries(readingSourceId, sourceMangaId);
+        await options.store.audit({
+          type: "review",
+          message: "Manually ignored external source title restored to sync eligibility.",
+          dataJson: JSON.stringify({ readingSourceId, sourceMangaId }),
         });
         await respondJson(response, { ok: true });
         return;
@@ -723,6 +815,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     externalMappings,
     externalReviews,
     externalIgnored,
+    weebCentral,
   ] = await Promise.all([
     options.store.listSeriesMappings(),
     options.store.listReviews(),
@@ -736,6 +829,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     options.store.listExternalSeriesMappings(),
     options.store.listExternalReviews(),
     options.store.listExternalIgnoredSeries(),
+    options.store.weebCentralMetrics(),
   ]);
   const ignored = await options.store.listIgnoredSeries();
   const effectiveDryRun = settingBoolean(settings.dryRun, options.dryRun);
@@ -764,6 +858,10 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     .section-head { align-items: center; display: flex; flex-wrap: wrap; gap: 0.45rem; }
     .help { color: #cbd5e1; display: block; font-size: 0.88rem; margin-top: 0.2rem; }
     .info-icon { align-items: center; border: 1px solid #64748b; border-radius: 999px; color: #bfdbfe; display: inline-flex; font-size: 0.75rem; font-weight: 700; height: 1.15rem; justify-content: center; width: 1.15rem; }
+    .metric-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+    .metric { background: #172033; border: 1px solid #334155; padding: 0.75rem; }
+    .metric strong { display: block; font-size: 1.4rem; }
+    .metric span { color: #cbd5e1; display: block; font-size: 0.86rem; }
     .quick-guide { background: #172033; border-color: #334155; }
     .kavita-hidden { background: #172033; }
     code { color: #fde68a; }
@@ -780,6 +878,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     </div>
     <p class="muted">Start here: confirm read events arrive, check unresolved external matches, then review the MAL outbox. Change MAL write mode to Send to MAL only when the pending outbox looks correct.</p>
   </section>
+  ${renderWeebCentralMetricsPanel(weebCentral)}
   <div class="section-head">
     <h2>Setup</h2>
     ${infoIcon("Connect MAL, choose whether pending outbox updates are previews or live writes, and decide whether advanced Kavita sync tables are shown.")}
@@ -880,7 +979,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   </table>
   <div class="section-head">
     <h2>External Unresolved Matches</h2>
-    ${infoIcon("External source titles that need a manual MAL choice because automatic matching was not confident enough.")}
+    ${infoIcon("External source titles that still need resolution. Retry resolution refreshes source enrichment and resolver caches; manual MAL ID is the last-resort path.")}
   </div>
   <table>
     <thead><tr><th>Source</th><th>Title</th><th>Reason</th><th>Approve</th></tr></thead>
@@ -892,7 +991,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   </div>
   <p>${externalIgnored.length} external Paperback source title${externalIgnored.length === 1 ? "" : "s"} are manually excluded from MAL sync.</p>
   <table>
-    <thead><tr><th>Source</th><th>Title</th><th>Reason</th><th>Created</th></tr></thead>
+    <thead><tr><th>Source</th><th>Title</th><th>Reason</th><th>Created</th><th>Restore</th></tr></thead>
     <tbody>${externalIgnored.map(renderExternalIgnoredRow).join("")}</tbody>
   </table>
   <div class="section-head">
@@ -995,6 +1094,28 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
         status.textContent = response.ok ? "Series ignored." : "Ignore failed.";
       });
     }
+    for (const form of document.querySelectorAll(".retry-resolution-form")) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch(event.currentTarget.dataset.endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        status.textContent = response.ok ? "Resolution retried." : await responseErrorMessage(response, "Retry failed.");
+      });
+    }
+    for (const form of document.querySelectorAll(".no-mal-entry-form")) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch(event.currentTarget.dataset.endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        status.textContent = response.ok ? "Marked as no MAL entry." : await responseErrorMessage(response, "No-MAL marker failed.");
+      });
+    }
     for (const form of document.querySelectorAll(".restore-form")) {
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
@@ -1068,6 +1189,29 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
 function infoIcon(text: string): string {
   const label = escapeHtml(text);
   return `<span class="info-icon" role="img" aria-label="${label}" title="${label}">i</span>`;
+}
+
+function renderWeebCentralMetricsPanel(metrics: WeebCentralMetricsRecord): string {
+  return `<section class="panel">
+    <div class="section-head">
+      <h2>WeebCentral Matching Health</h2>
+      ${infoIcon("WeebCentral is treated as a first-class source. These counters show whether events are being auto-linked through deterministic IDs/enrichment or still falling into review.")} 
+    </div>
+    <div class="metric-grid">
+      ${renderMetric("Events received", metrics.eventsReceived, "Paperback read events from WeebCentral seen by the bridge.")}
+      ${renderMetric("Auto-linked", metrics.autoMapped, "WeebCentral titles already mapped to MAL without manual approval.")}
+      ${renderMetric("Unresolved", metrics.unresolved, "WeebCentral titles still needing resolver improvement, retry, or a true no-MAL classification.")}
+      ${renderMetric("Ignored / no MAL", metrics.ignored, `${metrics.noMalEntry} marked as no MAL entry; these stop repeated review clutter without writing to MAL.`)}
+      ${renderMetric("Deterministic ID", metrics.deterministicIdMatches, "Mappings made from source MAL/AniList IDs after official MAL direct-ID validation.")}
+      ${renderMetric("Enrichment ID", metrics.enrichmentMatches, "Mappings found by enriching the WeebCentral public series page, then validating the resulting MAL ID.")}
+      ${renderMetric("Resolver search", metrics.resolverMatches, "Mappings made by conservative title search after deterministic paths were unavailable.")}
+      ${renderMetric("Unresolved rate", `${Math.round(metrics.weakUnresolvedRate * 100)}%`, "Share of WeebCentral titles still unresolved among linked, unresolved, and ignored states.")}
+    </div>
+  </section>`;
+}
+
+function renderMetric(label: string, value: number | string, help: string): string {
+  return `<div class="metric"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)} ${infoIcon(help)}</span></div>`;
 }
 
 function renderKavitaSyncHiddenNotice(counts: {
@@ -1231,6 +1375,8 @@ function renderExternalReviewRow(review: Required<ExternalReviewRecord>): string
   const candidate = firstReviewCandidate(candidates);
   const endpoint = `/api/external-unresolved-matches/${encodeURIComponent(review.readingSourceId)}/${encodeURIComponent(review.sourceMangaId)}/approve`;
   const ignoreEndpoint = `/api/external-unresolved-matches/${encodeURIComponent(review.readingSourceId)}/${encodeURIComponent(review.sourceMangaId)}/ignore`;
+  const retryEndpoint = `/api/external-unresolved-matches/${encodeURIComponent(review.readingSourceId)}/${encodeURIComponent(review.sourceMangaId)}/retry-resolution`;
+  const noMalEndpoint = `/api/external-unresolved-matches/${encodeURIComponent(review.readingSourceId)}/${encodeURIComponent(review.sourceMangaId)}/no-mal-entry`;
   return `<tr><td>${escapeHtml(review.readingSourceName)}<br /><code>${escapeHtml(review.sourceMangaId)}</code></td><td>${escapeHtml(review.title)}</td><td>${escapeHtml(review.reason)}</td><td>
     <form class="approval-form" data-endpoint="${endpoint}">
       <input name="malId" type="number" min="1" placeholder="MAL ID" value="${candidate?.malId ?? ""}" />
@@ -1247,6 +1393,12 @@ function renderExternalReviewRow(review: Required<ExternalReviewRecord>): string
     </form>
     <form class="ignore-form" data-endpoint="${ignoreEndpoint}">
       <button type="submit">Ignore</button>
+    </form>
+    <form class="retry-resolution-form" data-endpoint="${retryEndpoint}">
+      <button type="submit">Retry resolution</button>
+    </form>
+    <form class="no-mal-entry-form" data-endpoint="${noMalEndpoint}">
+      <button type="submit">Mark as no MAL entry</button>
     </form>
   </td></tr>`;
 }
@@ -1265,6 +1417,7 @@ function reviewResponseItem(
 
 function externalReviewResponseItem(
   review: Required<ExternalReviewRecord>,
+  diagnostics: Awaited<ReturnType<SqliteBridgeStore["listResolverDiagnostics"]>> = [],
 ): Record<string, unknown> {
   return {
     readingSourceId: review.readingSourceId,
@@ -1274,7 +1427,29 @@ function externalReviewResponseItem(
     reason: review.reason,
     createdAt: review.createdAt,
     candidates: parseReviewCandidates(review.candidatesJson),
+    diagnostics: diagnostics.map((entry) => ({
+      resolver: entry.resolver,
+      outcome: entry.outcome,
+      cacheHit: entry.cacheHit,
+      cacheKey: entry.cacheKey,
+      httpStatus: entry.httpStatus || undefined,
+      candidateCount: entry.candidateCount,
+      candidateIds: parseJsonArray(entry.candidateIdsJson),
+      cached: entry.cached,
+      cacheable: entry.cacheable,
+      createdAt: entry.createdAt,
+      message: entry.message,
+    })),
   };
+}
+
+function parseJsonArray(value: string): unknown[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 function parseReviewCandidates(candidatesJson: string): ScoredMalCandidate[] {
@@ -1390,7 +1565,12 @@ function renderIgnoredRow(
 function renderExternalIgnoredRow(
   ignored: Awaited<ReturnType<SqliteBridgeStore["listExternalIgnoredSeries"]>>[number],
 ): string {
-  return `<tr><td>${escapeHtml(ignored.readingSourceName)}<br /><code>${escapeHtml(ignored.sourceMangaId)}</code></td><td>${escapeHtml(ignored.title)}</td><td>${escapeHtml(ignored.reason)}</td><td>${escapeHtml(ignored.createdAt)}</td></tr>`;
+  const restoreEndpoint = `/api/external-ignored-series/${encodeURIComponent(ignored.readingSourceId)}/${encodeURIComponent(ignored.sourceMangaId)}/restore`;
+  return `<tr><td>${escapeHtml(ignored.readingSourceName)}<br /><code>${escapeHtml(ignored.sourceMangaId)}</code></td><td>${escapeHtml(ignored.title)}</td><td>${escapeHtml(ignored.reason)}</td><td>${escapeHtml(ignored.createdAt)}</td><td>
+    <form class="restore-form" data-endpoint="${restoreEndpoint}">
+      <button type="submit">Restore</button>
+    </form>
+  </td></tr>`;
 }
 
 async function respondJson(response: ServerResponse, body: unknown, status = 200): Promise<void> {
@@ -1472,6 +1652,7 @@ async function startFromEnv(): Promise<void> {
       const config = await effectiveBridgeConfig(baseConfig, store);
       const mal = createMalClient(config);
       const resolvers = [
+        createWeebCentralResolver({ config, store }),
         ...(config.enableJikanResolver ? [createJikanResolver({ config, store })] : []),
         ...(config.enableAnilistResolver ? [createAnilistResolver({ config, store })] : []),
       ];

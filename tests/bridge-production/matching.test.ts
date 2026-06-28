@@ -106,7 +106,60 @@ test("exact title with compatible media type auto-links when clearly ahead", () 
   assert.ok(result.confidence >= 0.92);
 });
 
-test("exact title ties remain in review", () => {
+test("exact primary title outranks exact alternate-title noise", () => {
+  const result = matchKavitaSeriesToMal({
+    series: {
+      kavitaSeriesId: 77,
+      title: "Clear Primary",
+      altTitles: ["Shared Alias"],
+      mediaType: "manga",
+    },
+    searchCandidates: [
+      {
+        malId: 1,
+        title: "Wrong Primary",
+        altTitles: ["Clear Primary"],
+        mediaType: "manga",
+      },
+      {
+        malId: 2,
+        title: "Clear Primary",
+        altTitles: ["Other Alias"],
+        mediaType: "manga",
+      },
+    ],
+  });
+
+  assert.equal(result.status, "matched");
+  assert.equal(result.malId, 2);
+});
+
+test("multiple exact primary title candidates remain unresolved", () => {
+  const result = matchKavitaSeriesToMal({
+    series: {
+      kavitaSeriesId: 77,
+      title: "Shared Exact Title",
+      mediaType: "manga",
+    },
+    searchCandidates: [
+      {
+        malId: 1,
+        title: "Shared Exact Title",
+        mediaType: "manga",
+      },
+      {
+        malId: 2,
+        title: "Shared Exact Title",
+        mediaType: "manga",
+      },
+    ],
+  });
+
+  assert.equal(result.status, "review");
+  assert.equal(result.reason, "exact-title-tie");
+});
+
+test("exact primary title beats exact alternate-title even when both are plausible", () => {
   const series: KavitaSeriesCandidate = {
     kavitaSeriesId: 13,
     title: "BlazBlue",
@@ -129,8 +182,8 @@ test("exact title ties remain in review", () => {
 
   const result = matchKavitaSeriesToMal({ series, searchCandidates: candidates });
 
-  assert.equal(result.status, "review");
-  assert.equal(result.reason, "ambiguous-or-low-confidence");
+  assert.equal(result.status, "matched");
+  assert.equal(result.malId, 65097);
 });
 
 test("title normalization removes punctuation and casing noise", () => {

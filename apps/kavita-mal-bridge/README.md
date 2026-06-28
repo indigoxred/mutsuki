@@ -18,13 +18,22 @@ SQLite-backed outbox.
 - MAL OAuth disconnect/re-authorize support for stale or incorrect tokens.
 - Token refresh before scheduled/manual sync runs.
 - Deterministic MAL matching from existing Kavita/source MAL URLs/IDs and AniList IDs/links.
+- First-class WeebCentral enrichment from the public `https://weebcentral.com/series/<id>` detail
+  page. The bridge extracts public MAL/AniList/MangaUpdates links when present, then validates any
+  resolved MAL ID through the official MAL API before mapping.
 - Resolver-based candidate discovery through Jikan and AniList, with official MAL direct-ID
   hydration before scoring or writing.
+- Resolver diagnostics for unresolved external titles, including cache hits, resolver outcomes,
+  rate limits, parse failures, candidate IDs, and whether the result was cacheable.
+- Retry resolution controls for unresolved external titles. Retry clears resolver caches, replays the
+  latest stored read event, reruns source enrichment, and auto-maps if new deterministic evidence is
+  found.
 - Strict high-confidence title and alternate-title matching. Official MAL text search is still used,
   but it is not the only discovery source because it can miss English aliases.
 - Review queue and manual approval controls for ambiguous or low-confidence matches, including
   parsed candidate lists with confidence reasons.
-- Manual ignore and restore controls for unresolved series which should not sync to MAL.
+- Manual ignore, explicit no-MAL-entry, and restore controls for unresolved series which should not
+  sync to MAL.
 - Manual override controls for existing mappings, offsets, tracking policies, and persisted Kavita
   titles.
 - Manual retry controls for failed MAL outbox rows after settings, authorization, or transient MAL
@@ -101,15 +110,21 @@ Matches** for manual approval or ignore.
 The matching flow is conservative and automatic-first:
 
 1. Deterministic MAL IDs/URLs from source or Kavita metadata auto-link after validation.
-2. Jikan and AniList discover candidate MAL IDs when official MAL search misses a title.
-3. Every discovered candidate is hydrated through the official MAL API before scoring.
-4. Exact title or alternate-title matches can auto-link when the winner is clearly ahead.
-5. Weak token overlap, such as only sharing the word `Soldier`, stays in review and is labelled as a
+2. WeebCentral enrichment fetches the public series page and uses MAL/AniList links when available.
+3. Jikan and AniList discover candidate MAL IDs when official MAL search misses a title.
+4. Every discovered candidate is hydrated through the official MAL API before scoring.
+5. Exact primary title matches outrank exact alternate-title noise. True exact-primary ties stay in
+   review.
+6. Weak token overlap, such as only sharing the word `Soldier`, stays in review and is labelled as a
    weak suggestion rather than a recommendation.
 
 `Chained Soldier` / `Mato Seihei no Slave` / MAL `116880` is a regression fixture for this behavior:
 official MAL search may miss the English title, but resolver discovery plus official direct-ID
 hydration can still auto-link it safely.
+
+`Ookii Muki Muki Chiisai Muchi Muchi` is a WeebCentral enrichment fixture: the public WeebCentral
+page exposes an AniList link, AniList exposes `idMal`, and the bridge can validate and map that MAL
+ID without presenting weak official-search noise as a recommendation.
 
 ## API
 
@@ -119,6 +134,7 @@ hydration can still auto-link it safely.
 - `GET /api/external-mappings`
 - `GET /api/unresolved-matches`
 - `GET /api/external-unresolved-matches`
+- `GET /api/ignored-series`
 - `GET /api/outbox`
 - `GET /api/audit-log`
 - `GET /api/progress-events`
@@ -133,6 +149,9 @@ hydration can still auto-link it safely.
 - `POST /api/mal/oauth/disconnect`
 - `POST /api/unresolved-matches/:kavitaSeriesId/approve`
 - `POST /api/external-unresolved-matches/:readingSourceId/:sourceMangaId/approve`
+- `POST /api/external-unresolved-matches/:readingSourceId/:sourceMangaId/retry-resolution`
+- `POST /api/external-unresolved-matches/:readingSourceId/:sourceMangaId/no-mal-entry`
+- `POST /api/external-ignored-series/:readingSourceId/:sourceMangaId/restore`
 - `POST /api/mappings/:kavitaSeriesId`
 
 ## Unraid Notes

@@ -72,6 +72,45 @@ export interface ExternalIgnoredSeriesRecord {
   createdAt?: string;
 }
 
+export interface ResolverDiagnosticRecord {
+  readingSourceId: string;
+  sourceMangaId: string;
+  sourceTitle: string;
+  schemaVersion: number;
+  titleVariantsJson: string;
+  resolver: string;
+  enabled: boolean;
+  cacheHit: boolean;
+  cacheKey: string;
+  httpStatus?: number;
+  outcome:
+    | "ok"
+    | "ok-zero-candidates"
+    | "disabled"
+    | "timeout"
+    | "rate-limited"
+    | "error"
+    | "parse-failed";
+  candidateIdsJson: string;
+  candidateCount: number;
+  cached: boolean;
+  cacheable: boolean;
+  message?: string;
+  createdAt?: string;
+}
+
+export interface WeebCentralMetricsRecord {
+  eventsReceived: number;
+  autoMapped: number;
+  unresolved: number;
+  ignored: number;
+  noMalEntry: number;
+  deterministicIdMatches: number;
+  enrichmentMatches: number;
+  resolverMatches: number;
+  weakUnresolvedRate: number;
+}
+
 export interface IgnoredSeriesRecord {
   kavitaSeriesId: number;
   title: string;
@@ -235,6 +274,26 @@ export class SqliteBridgeStore implements OutboxStore {
         expires_at TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (resolver, cache_key)
+      );
+      CREATE TABLE IF NOT EXISTS resolver_diagnostics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reading_source_id TEXT NOT NULL,
+        source_manga_id TEXT NOT NULL,
+        source_title TEXT NOT NULL,
+        schema_version INTEGER NOT NULL,
+        title_variants_json TEXT NOT NULL,
+        resolver TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        cache_hit INTEGER NOT NULL,
+        cache_key TEXT NOT NULL,
+        http_status INTEGER,
+        outcome TEXT NOT NULL,
+        candidate_ids_json TEXT NOT NULL,
+        candidate_count INTEGER NOT NULL,
+        cached INTEGER NOT NULL,
+        cacheable INTEGER NOT NULL,
+        message TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
       CREATE TABLE IF NOT EXISTS source_policies (
         reading_source_id TEXT PRIMARY KEY,
@@ -689,6 +748,151 @@ export class SqliteBridgeStore implements OutboxStore {
       .run(resolver, cacheKey, JSON.stringify(response), expiresAt.toISOString());
   }
 
+  async clearResolverCache(input: { resolver?: string; cacheKey?: string } = {}): Promise<void> {
+    if (input.resolver && input.cacheKey) {
+      this.db
+        .prepare("DELETE FROM resolver_cache WHERE resolver = ? AND cache_key = ?")
+        .run(input.resolver, input.cacheKey);
+      return;
+    }
+    if (input.resolver) {
+      this.db.prepare("DELETE FROM resolver_cache WHERE resolver = ?").run(input.resolver);
+      return;
+    }
+    if (input.cacheKey) {
+      this.db.prepare("DELETE FROM resolver_cache WHERE cache_key = ?").run(input.cacheKey);
+      return;
+    }
+    this.db.prepare("DELETE FROM resolver_cache").run();
+  }
+
+  async recordResolverDiagnostic(record: ResolverDiagnosticRecord): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO resolver_diagnostics (
+            reading_source_id, source_manga_id, source_title, schema_version,
+            title_variants_json, resolver, enabled, cache_hit, cache_key, http_status,
+            outcome, candidate_ids_json, candidate_count, cached, cacheable, message
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      )
+      .run(
+        record.readingSourceId,
+        record.sourceMangaId,
+        record.sourceTitle,
+        record.schemaVersion,
+        record.titleVariantsJson,
+        record.resolver,
+        record.enabled ? 1 : 0,
+        record.cacheHit ? 1 : 0,
+        record.cacheKey,
+        record.httpStatus ?? null,
+        record.outcome,
+        record.candidateIdsJson,
+        record.candidateCount,
+        record.cached ? 1 : 0,
+        record.cacheable ? 1 : 0,
+        record.message ?? null,
+      );
+  }
+
+  async listResolverDiagnostics(
+    filter: { readingSourceId?: string; sourceMangaId?: string; limit?: number } = {},
+  ): Promise<Required<ResolverDiagnosticRecord>[]> {
+    const limit = Math.max(1, Math.min(250, Math.floor(filter.limit ?? 100)));
+    if (filter.readingSourceId && filter.sourceMangaId) {
+      return (
+        this.db
+          .prepare(
+            `
+              SELECT * FROM resolver_diagnostics
+              WHERE reading_source_id = ? AND source_manga_id = ?
+              ORDER BY id DESC LIMIT ?
+            `,
+          )
+          .all(
+            filter.readingSourceId,
+            filter.sourceMangaId,
+            limit,
+          ) as unknown as ResolverDiagnosticRow[]
+      ).map(resolverDiagnosticFromRow);
+    }
+    if (filter.readingSourceId) {
+      return (
+        this.db
+          .prepare(
+            `
+              SELECT * FROM resolver_diagnostics
+              WHERE reading_source_id = ?
+              ORDER BY id DESC LIMIT ?
+            `,
+          )
+          .all(filter.readingSourceId, limit) as unknown as ResolverDiagnosticRow[]
+      ).map(resolverDiagnosticFromRow);
+    }
+    return (
+      this.db
+        .prepare("SELECT * FROM resolver_diagnostics ORDER BY id DESC LIMIT ?")
+        .all(limit) as unknown as ResolverDiagnosticRow[]
+    ).map(resolverDiagnosticFromRow);
+  }
+
+  async weebCentralMetrics(): Promise<WeebCentralMetricsRecord> {
+    const eventsReceived = this.countWhere(
+      "read_events",
+      "lower(reading_source_id) LIKE '%weebcentral%' OR lower(reading_source_name) LIKE '%weebcentral%' OR lower(reading_source_name) LIKE '%weeb central%'",
+    );
+    const autoMapped = this.countWhere("external_series_mappings", weebCentralSourceWhere());
+    const unresolved = this.countWhere("external_review_queue", weebCentralSourceWhere());
+    const ignored = this.countWhere("external_ignored_series", weebCentralSourceWhere());
+    const noMalEntry = this.countWhere(
+      "external_ignored_series",
+      `${weebCentralSourceWhere()} AND reason = 'no-mal-entry'`,
+    );
+    const deterministicIdMatches = this.countWhere(
+      "external_series_mappings",
+      `${weebCentralSourceWhere()} AND match_method IN ('source-mal-id', 'source-anilist-id', 'weebcentral-mal-id', 'weebcentral-anilist-id')`,
+    );
+    const enrichmentMatches = this.countWhere(
+      "external_series_mappings",
+      `${weebCentralSourceWhere()} AND match_method IN ('weebcentral-mal-id', 'weebcentral-anilist-id')`,
+    );
+    const resolverMatches = this.countWhere(
+      "external_series_mappings",
+      `${weebCentralSourceWhere()} AND match_method = 'title-search'`,
+    );
+    const totalResolvedStates = autoMapped + unresolved + ignored;
+    return {
+      eventsReceived,
+      autoMapped,
+      unresolved,
+      ignored,
+      noMalEntry,
+      deterministicIdMatches,
+      enrichmentMatches,
+      resolverMatches,
+      weakUnresolvedRate:
+        totalResolvedStates > 0 ? Number((unresolved / totalResolvedStates).toFixed(4)) : 0,
+    };
+  }
+
+  async getLatestReadEvent(
+    readingSourceId: string,
+    sourceMangaId: string,
+  ): Promise<BridgeReadEventRecord | undefined> {
+    const row = this.db
+      .prepare(
+        `
+          SELECT * FROM read_events
+          WHERE reading_source_id = ? AND source_manga_id = ?
+          ORDER BY id DESC LIMIT 1
+        `,
+      )
+      .get(readingSourceId, sourceMangaId) as ReadEventRow | undefined;
+    return row ? readEventFromRow(row) : undefined;
+  }
+
   async listReadEvents(limit = 100): Promise<BridgeReadEventRecord[]> {
     return (
       this.db
@@ -972,6 +1176,13 @@ export class SqliteBridgeStore implements OutboxStore {
     if (rows.some((row) => row.name === column)) return;
     this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
+
+  private countWhere(table: string, where: string): number {
+    const row = this.db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${where}`).get() as
+      | { count: number }
+      | undefined;
+    return row?.count ?? 0;
+  }
 }
 
 function countForStatus(
@@ -979,6 +1190,10 @@ function countForStatus(
   status: BridgeOutboxItem["status"],
 ): number {
   return rows.find((row) => row.status === status)?.count ?? 0;
+}
+
+function weebCentralSourceWhere(): string {
+  return "lower(reading_source_id) LIKE '%weebcentral%' OR lower(reading_source_name) LIKE '%weebcentral%' OR lower(reading_source_name) LIKE '%weeb central%'";
 }
 
 interface MappingRow {
@@ -1085,6 +1300,26 @@ interface ReadEventRow {
   kavita_chapter_id: number | null;
   chapter_kind: BridgeReadEventRecord["chapterKind"];
   raw_event_json: string;
+}
+
+interface ResolverDiagnosticRow {
+  reading_source_id: string;
+  source_manga_id: string;
+  source_title: string;
+  schema_version: number;
+  title_variants_json: string;
+  resolver: string;
+  enabled: number;
+  cache_hit: number;
+  cache_key: string;
+  http_status: number | null;
+  outcome: ResolverDiagnosticRecord["outcome"];
+  candidate_ids_json: string;
+  candidate_count: number;
+  cached: number;
+  cacheable: number;
+  message: string | null;
+  created_at: string;
 }
 
 interface SourcePolicyRow {
@@ -1221,6 +1456,28 @@ function readEventFromRow(row: ReadEventRow): BridgeReadEventRecord {
     kavitaChapterId: row.kavita_chapter_id ?? undefined,
     chapterKind: row.chapter_kind,
     rawEventJson: row.raw_event_json,
+  };
+}
+
+function resolverDiagnosticFromRow(row: ResolverDiagnosticRow): Required<ResolverDiagnosticRecord> {
+  return {
+    readingSourceId: row.reading_source_id,
+    sourceMangaId: row.source_manga_id,
+    sourceTitle: row.source_title,
+    schemaVersion: row.schema_version,
+    titleVariantsJson: row.title_variants_json,
+    resolver: row.resolver,
+    enabled: row.enabled === 1,
+    cacheHit: row.cache_hit === 1,
+    cacheKey: row.cache_key,
+    httpStatus: row.http_status ?? 0,
+    outcome: row.outcome,
+    candidateIdsJson: row.candidate_ids_json,
+    candidateCount: row.candidate_count,
+    cached: row.cached === 1,
+    cacheable: row.cacheable === 1,
+    message: row.message ?? "",
+    createdAt: row.created_at,
   };
 }
 

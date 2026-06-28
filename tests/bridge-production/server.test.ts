@@ -37,6 +37,44 @@ test("bridge server exposes status and unresolved review API", async () => {
     title: "Ignored Review",
     reason: "manual-ignore",
   });
+  await store.appendReadEvent({
+    schemaVersion: 3,
+    readingSourceId: "WeebCentral",
+    readingSourceName: "WeebCentral",
+    readingSourceKind: "external",
+    sourceMangaId: "01K4D06VAMY7PGK8HVKY3CCGTS",
+    sourceChapterId: "chapter-1",
+    sourceTitle: "Ookii Muki Muki Chiisai Muchi Muchi",
+    sourcePrimaryTitle: "Ookii Muki Muki Chiisai Muchi Muchi",
+    sourceAltTitles: [],
+    sourceExternalIds: {},
+    eventSource: "paperback-progress-bridge",
+    actionId: "status-weebcentral-event",
+    occurredAt: "2026-06-26T00:00:00.000Z",
+    receivedAt: "2026-06-26T00:00:00.000Z",
+    sourceChapterNumber: 1,
+    sourceChapterVolume: 0,
+    chapterKind: "manga",
+    rawEventJson: "{}",
+    sourceOriginalMetadataJson: "{}",
+  });
+  await store.upsertExternalSeriesMapping({
+    readingSourceId: "WeebCentral",
+    sourceMangaId: "01K4D06VAMY7PGK8HVKY3CCGTS",
+    readingSourceName: "WeebCentral",
+    title: "Ookii Muki Muki Chiisai Muchi Muchi",
+    malId: 182880,
+    matchMethod: "weebcentral-anilist-id",
+    confidence: 1,
+    locked: false,
+    chapterOffset: 0,
+    volumeOffset: 0,
+    trackingMode: "chapter-and-volume",
+    lastObservedChapter: 1,
+    lastObservedVolume: 0,
+    lastPushedChapter: 0,
+    lastPushedVolume: 0,
+  });
 
   const server = createKavitaMalBridgeServer({
     store,
@@ -73,6 +111,10 @@ test("bridge server exposes status and unresolved review API", async () => {
     assert.equal(status.scheduler.intervalSeconds, 600);
     assert.equal(status.scheduler.lastResult.skipped, false);
     assert.equal(status.ignored, 1);
+    assert.equal(status.weebCentral.eventsReceived, 1);
+    assert.equal(status.weebCentral.autoMapped, 1);
+    assert.equal(status.weebCentral.deterministicIdMatches, 1);
+    assert.equal(status.weebCentral.enrichmentMatches, 1);
     assert.equal(reviews.items.length, 1);
     assert.equal(reviews.items[0].title, "Needs Review");
     assert.equal(reviews.items[0].candidates.length, 2);
@@ -417,6 +459,145 @@ test("external unresolved review page hides weak-only official search noise by d
     assert.match(html, /No safe MAL recommendation/u);
     assert.match(html, /Show weak search noise/u);
     assert.doesNotMatch(html, /value="157541"/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server can retry external unresolved resolution and clear stale review", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.appendReadEvent({
+    schemaVersion: 3,
+    eventSource: "paperback-progress-bridge",
+    readingSourceId: "WeebCentral",
+    readingSourceName: "WeebCentral",
+    readingSourceKind: "external",
+    actionId: "read-ookii-1",
+    occurredAt: "2026-06-28T00:00:00.000Z",
+    receivedAt: "2026-06-28T00:00:01.000Z",
+    sourceMangaId: "01K4D06VAMY7PGK8HVKY3CCGTS",
+    sourceChapterId: "chapter-32",
+    sourceTitle: "Ookii Muki Muki Chiisai Muchi Muchi",
+    sourcePrimaryTitle: "Ookii Muki Muki Chiisai Muchi Muchi",
+    sourceShareUrl: "https://weebcentral.com/series/01K4D06VAMY7PGK8HVKY3CCGTS",
+    sourceChapterNumber: 32,
+    chapterKind: "manga",
+    rawEventJson: "{}",
+  });
+  await store.enqueueExternalReview({
+    readingSourceId: "WeebCentral",
+    sourceMangaId: "01K4D06VAMY7PGK8HVKY3CCGTS",
+    readingSourceName: "WeebCentral",
+    title: "Ookii Muki Muki Chiisai Muchi Muchi",
+    reason: "ambiguous-or-low-confidence",
+    candidatesJson: "[]",
+  });
+  let processCount = 0;
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+    processReadEvent: async (event) => {
+      processCount += 1;
+      await store.upsertExternalSeriesMapping({
+        readingSourceId: event.readingSourceId,
+        sourceMangaId: event.sourceMangaId,
+        readingSourceName: event.readingSourceName,
+        title: event.sourceTitle,
+        malId: 182880,
+        matchMethod: "weebcentral-anilist-id",
+        confidence: 1,
+        locked: false,
+        chapterOffset: 0,
+        volumeOffset: 0,
+        trackingMode: "chapter-and-volume",
+        lastObservedChapter: 0,
+        lastObservedVolume: 0,
+        lastPushedChapter: 0,
+        lastPushedVolume: 0,
+      });
+      await store.deleteExternalReview(event.readingSourceId, event.sourceMangaId);
+      return { status: "queued", malId: 182880, outboxId: "test-outbox" };
+    },
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await postJson(
+      `http://127.0.0.1:${port}/api/external-unresolved-matches/WeebCentral/01K4D06VAMY7PGK8HVKY3CCGTS/retry-resolution`,
+      {},
+    );
+
+    assert.equal(response.ok, true);
+    assert.equal(response.processing.status, "queued");
+    assert.equal(processCount, 1);
+    assert.equal((await store.listExternalReviews()).length, 0);
+    assert.equal((await store.listExternalSeriesMappings())[0]?.malId, 182880);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server can mark an external unresolved title as no MAL entry", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.enqueueExternalReview({
+    readingSourceId: "WeebCentral",
+    sourceMangaId: "01NOENTRY000000000000000000",
+    readingSourceName: "WeebCentral",
+    title: "No MAL Entry Suspected",
+    reason: "no-deterministic-id-and-only-weak-candidates",
+    candidatesJson: "[]",
+  });
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    await postJson(
+      `http://127.0.0.1:${port}/api/external-unresolved-matches/WeebCentral/01NOENTRY000000000000000000/no-mal-entry`,
+      {},
+    );
+
+    const ignored = await fetchJson(`http://127.0.0.1:${port}/api/ignored-series`);
+    assert.equal((await store.listExternalReviews()).length, 0);
+    assert.equal(
+      await store.isExternalSeriesIgnored("WeebCentral", "01NOENTRY000000000000000000"),
+      true,
+    );
+    assert.equal(ignored.externalItems[0].reason, "no-mal-entry");
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();
