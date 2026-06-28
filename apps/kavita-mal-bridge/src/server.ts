@@ -1535,15 +1535,24 @@ function buildActivityFeedItems(input: {
   outboxHistoryItems: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>;
   externalReviews: ExternalReviewRecord[];
 }): ActivityFeedItem[] {
-  const received = input.readEvents.map((event) => ({
-    time: event.receivedAt,
-    status: "received" as const,
-    statusLabel: "Received",
-    source: event.readingSourceName,
-    title: event.sourceTitle || event.sourceMangaId,
-    detail: `Ch. ${formatBridgeNumber(event.sourceChapterNumber)}${event.sourceChapterVolume === undefined ? "" : `, Vol. ${formatBridgeNumber(event.sourceChapterVolume)}`}`,
-    destination: "Matching",
-  }));
+  const resolvedReadKeys = new Set(
+    [
+      ...input.externalReviews.map(sourceKeyForExternalReview),
+      ...input.activeOutboxItems.map(sourceKeyFromOutbox),
+      ...input.outboxHistoryItems.map(sourceKeyFromOutbox),
+    ].filter((key): key is string => key !== undefined),
+  );
+  const received = input.readEvents
+    .filter((event) => !resolvedReadKeys.has(sourceKeyForReadEvent(event)))
+    .map((event) => ({
+      time: event.receivedAt,
+      status: "received" as const,
+      statusLabel: "Received",
+      source: event.readingSourceName,
+      title: event.sourceTitle || event.sourceMangaId,
+      detail: `Ch. ${formatBridgeNumber(event.sourceChapterNumber)}${event.sourceChapterVolume === undefined ? "" : `, Vol. ${formatBridgeNumber(event.sourceChapterVolume)}`}`,
+      destination: "Awaiting match",
+    }));
   const review = input.externalReviews.map((review) => ({
     time: review.createdAt ?? "",
     status: "review" as const,
@@ -1593,6 +1602,25 @@ function sourceLabelFromOutbox(
   if (item.targetType !== "external") return "Kavita";
   const match = /^external:([^:]+):/u.exec(item.targetKey);
   return match?.[1] ? decodeURIComponent(match[1]) : "External";
+}
+
+function sourceKeyForReadEvent(
+  event: Awaited<ReturnType<SqliteBridgeStore["listReadEvents"]>>[number],
+): string {
+  return `${event.readingSourceId}:${event.sourceMangaId}`;
+}
+
+function sourceKeyForExternalReview(review: ExternalReviewRecord): string {
+  return `${review.readingSourceId}:${review.sourceMangaId}`;
+}
+
+function sourceKeyFromOutbox(
+  item: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>[number],
+): string | undefined {
+  if (item.targetType !== "external") return undefined;
+  const match = /^external:([^:]+):(.+)$/u.exec(item.targetKey);
+  if (!match?.[1] || !match[2]) return undefined;
+  return `${decodeURIComponent(match[1])}:${decodeURIComponent(match[2])}`;
 }
 
 function outboxUpdateSummary(

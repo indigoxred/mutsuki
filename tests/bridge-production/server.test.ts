@@ -243,6 +243,84 @@ test("bridge home separates active MAL outbox work from successful send history"
   }
 });
 
+test("bridge activity feed shows the current lifecycle state instead of stale received matching", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.appendReadEvent({
+    schemaVersion: 3,
+    readingSourceId: "WeebCentral",
+    readingSourceName: "WeebCentral",
+    readingSourceKind: "external",
+    sourceMangaId: "01J76XYGJ92G1Y5D9M43KQ1V1D",
+    sourceChapterId: "chapter-3",
+    sourceTitle: "Sawaranaide Kotesashi-kun",
+    sourcePrimaryTitle: "Sawaranaide Kotesashi-kun",
+    sourceAltTitles: [],
+    sourceExternalIds: {},
+    eventSource: "paperback-progress-bridge",
+    actionId: "sawaranaide-read",
+    occurredAt: "2026-06-28T09:33:56.000Z",
+    receivedAt: "2026-06-28T09:33:56.937Z",
+    sourceChapterNumber: 3,
+    sourceChapterVolume: 0,
+    chapterKind: "manga",
+    rawEventJson: "{}",
+    sourceOriginalMetadataJson: "{}",
+  });
+  const pushed = await enqueueMalUpdate(store, {
+    kavitaSeriesId: -102918248,
+    targetType: "external",
+    targetKey: "external:WeebCentral:01J76XYGJ92G1Y5D9M43KQ1V1D",
+    targetTitle: "Sawaranaide Kotesashi-kun",
+    malId: 136412,
+    update: { num_chapters_read: 3 },
+    reason: "paperback-external-read-event",
+    now: new Date("2026-06-28T09:34:00.000Z"),
+  });
+  await store.update({
+    ...pushed,
+    status: "succeeded",
+    attempts: 1,
+    updatedAt: "2026-06-28T09:34:01.000Z",
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: false,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    const activityStart = html.indexOf("Recent Activity Feed");
+    const activitySection = html.slice(
+      activityStart,
+      html.indexOf('data-tab-panel="settings"', activityStart),
+    );
+
+    assert.match(activitySection, /Sawaranaide Kotesashi-kun/u);
+    assert.match(activitySection, /Sent/u);
+    assert.match(activitySection, /MAL 136412/u);
+    assert.doesNotMatch(activitySection, /Matching/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge server processes the MAL outbox without running Kavita sync", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
