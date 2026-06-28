@@ -139,9 +139,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
             sourceChapterId: event.sourceChapterId,
           }),
         });
-        const processing = await processReadEventSafely(options, event, policy, {
-          forceRefreshReview: true,
-        });
+        const processing = await processReadEventSafely(options, event, policy);
         await respondJson(response, { ok: true, event, processing }, 202);
         return;
       }
@@ -483,7 +481,9 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         }
         await options.store.clearResolverCache();
         const policy = await options.store.ensureSourcePolicy(defaultSourcePolicyForEvent(event));
-        const processing = await processReadEventSafely(options, event, policy);
+        const processing = await processReadEventSafely(options, event, policy, {
+          forceRefreshReview: true,
+        });
         await options.store.audit({
           type: "review",
           message: "Manual retry resolution requested for external source title.",

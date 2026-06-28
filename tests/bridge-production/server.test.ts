@@ -559,8 +559,9 @@ test("bridge server can retry external unresolved resolution and clear stale rev
       outboxSucceeded: 0,
       outboxFailed: 0,
     }),
-    processReadEvent: async (event) => {
+    processReadEvent: async (event, _policy, processOptions) => {
       processCount += 1;
+      assert.equal(processOptions?.forceRefreshReview, true);
       await store.upsertExternalSeriesMapping({
         readingSourceId: event.readingSourceId,
         sourceMangaId: event.sourceMangaId,
