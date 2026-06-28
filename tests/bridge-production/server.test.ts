@@ -210,9 +210,156 @@ test("bridge server receives Paperback read events with source identity and defa
     assert.match(html, /External Story/u);
     assert.match(html, /approved-external-mappings/u);
     assert.ok(
-      html.indexOf("Recent Paperback Read Events") < html.indexOf("Mappings"),
-      "recent read events should be visible before the long mappings table",
+      html.indexOf("Recent Paperback Read Events") < html.indexOf("External Source Mappings"),
+      "recent read events should be visible before mapping tables",
     );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge home hides Kavita sync panels by default while keeping external tracking visible", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.upsertSeriesMapping({
+    kavitaSeriesId: 70,
+    kavitaLibraryId: 2,
+    title: "Hidden Kavita Mapping",
+    malId: 9876,
+    matchMethod: "title-search",
+    confidence: 0.94,
+    locked: false,
+    chapterOffset: 0,
+    volumeOffset: 0,
+    trackingMode: "chapter-and-volume",
+    lastObservedChapter: 3,
+    lastObservedVolume: 1,
+    lastPushedChapter: 2,
+    lastPushedVolume: 1,
+  });
+  await store.enqueueReview({
+    kavitaSeriesId: 99,
+    title: "Hidden Kavita Review",
+    reason: "ambiguous-or-low-confidence",
+    candidatesJson: "[]",
+  });
+  await store.upsertExternalSeriesMapping({
+    readingSourceId: "MangaDex",
+    sourceMangaId: "external-title-1",
+    readingSourceName: "MangaDex",
+    title: "Visible External Mapping",
+    malId: 12345,
+    matchMethod: "title-search",
+    confidence: 0.96,
+    locked: false,
+    chapterOffset: 0,
+    volumeOffset: 0,
+    trackingMode: "chapter-and-volume",
+    lastObservedChapter: 5,
+    lastObservedVolume: 0,
+    lastPushedChapter: 5,
+    lastPushedVolume: 0,
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+
+    assert.match(html, /Show Kavita sync panels/u);
+    assert.match(html, /Kavita sync panels hidden/u);
+    assert.match(html, /Visible External Mapping/u);
+    assert.match(html, /External Source Mappings/u);
+    assert.match(html, /title="Shows the long Kavita mapping and review tables/u);
+    assert.doesNotMatch(html, /Hidden Kavita Mapping/u);
+    assert.doesNotMatch(html, /Hidden Kavita Review/u);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge home shows Kavita sync panels only after the display toggle is enabled", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.saveSetting("showKavitaSyncPanels", "true");
+  await store.upsertSeriesMapping({
+    kavitaSeriesId: 70,
+    kavitaLibraryId: 2,
+    title: "Visible Kavita Mapping",
+    malId: 9876,
+    matchMethod: "title-search",
+    confidence: 0.94,
+    locked: false,
+    chapterOffset: 0,
+    volumeOffset: 0,
+    trackingMode: "chapter-and-volume",
+    lastObservedChapter: 3,
+    lastObservedVolume: 1,
+    lastPushedChapter: 2,
+    lastPushedVolume: 1,
+  });
+  await store.enqueueReview({
+    kavitaSeriesId: 99,
+    title: "Visible Kavita Review",
+    reason: "ambiguous-or-low-confidence",
+    candidatesJson: JSON.stringify([
+      {
+        malId: 123,
+        title: "Likely Candidate",
+        confidence: 0.83,
+        reasons: ["similar-title"],
+      },
+    ]),
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+
+    assert.doesNotMatch(html, /Kavita sync panels hidden/u);
+    assert.match(html, /Kavita Series Mappings/u);
+    assert.match(html, /Visible Kavita Mapping/u);
+    assert.match(html, /Visible Kavita Review/u);
+    assert.match(html, /Likely Candidate/u);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();
@@ -517,6 +664,7 @@ test("bridge server exposes mapped series titles for review and override", async
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
   store.migrate();
+  await store.saveSetting("showKavitaSyncPanels", "true");
   await store.upsertSeriesMapping({
     kavitaSeriesId: 70,
     kavitaLibraryId: 2,
@@ -721,6 +869,7 @@ test("bridge home page exposes setup, OAuth, and review approval controls", asyn
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
   store.migrate();
+  await store.saveSetting("showKavitaSyncPanels", "true");
   await store.enqueueReview({
     kavitaSeriesId: 77,
     title: "Needs Approval",

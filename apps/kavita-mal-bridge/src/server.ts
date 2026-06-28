@@ -80,6 +80,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         const externalIgnored = await options.store.listExternalIgnoredSeries();
         await respondJson(response, {
           dryRun: settingBoolean(settings.dryRun, options.dryRun),
+          showKavitaSyncPanels: settingBoolean(settings.showKavitaSyncPanels, false),
           kavitaConfigured: Boolean(settings.kavitaBaseUrl && settings.kavitaApiKey),
           malOAuthConfigured: Boolean(settings.malClientId && settings.malRedirectUri),
           malAuthorized: Boolean(tokens),
@@ -538,6 +539,9 @@ async function saveSettings(
     if (typeof value === "string") await store.saveSetting(key, value.trim());
   }
   if (typeof body.dryRun === "boolean") await store.saveSetting("dryRun", String(body.dryRun));
+  if (typeof body.showKavitaSyncPanels === "boolean") {
+    await store.saveSetting("showKavitaSyncPanels", String(body.showKavitaSyncPanels));
+  }
   const pollInterval = numberBodyField(body, "pollIntervalSeconds");
   if (pollInterval !== undefined) {
     await store.saveSetting("pollIntervalSeconds", String(Math.max(60, Math.floor(pollInterval))));
@@ -704,6 +708,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   ]);
   const ignored = await options.store.listIgnoredSeries();
   const effectiveDryRun = settingBoolean(settings.dryRun, options.dryRun);
+  const showKavitaSyncPanels = settingBoolean(settings.showKavitaSyncPanels, false);
   const schedule = schedulerStatus(options);
   return `<!doctype html>
 <html lang="en">
@@ -713,6 +718,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   <title>Mutsuki Kavita MAL Bridge</title>
   <style>
     body { background: #111827; color: #f9fafb; font-family: system-ui, sans-serif; margin: 2rem; }
+    h1, h2 { margin-bottom: 0.35rem; }
     table { border-collapse: collapse; width: 100%; margin: 1rem 0 2rem; }
     th, td { border-bottom: 1px solid #374151; padding: 0.6rem; text-align: left; vertical-align: top; }
     th { color: #bfdbfe; font-size: 0.85rem; text-transform: uppercase; }
@@ -722,6 +728,11 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     label { display: block; margin: 0.45rem 0; }
     .row { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
     .panel { border: 1px solid #374151; margin: 1rem 0 2rem; padding: 1rem; }
+    .section-head { align-items: center; display: flex; flex-wrap: wrap; gap: 0.45rem; }
+    .help { color: #cbd5e1; display: block; font-size: 0.88rem; margin-top: 0.2rem; }
+    .info-icon { align-items: center; border: 1px solid #64748b; border-radius: 999px; color: #bfdbfe; display: inline-flex; font-size: 0.75rem; font-weight: 700; height: 1.15rem; justify-content: center; width: 1.15rem; }
+    .quick-guide { background: #172033; border-color: #334155; }
+    .kavita-hidden { background: #172033; }
     code { color: #fde68a; }
     .muted { color: #cbd5e1; }
   </style>
@@ -729,98 +740,120 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
 <body>
   <h1>Mutsuki Kavita MAL Bridge</h1>
   <p class="muted">Mode: <strong>${effectiveDryRun ? "dry-run" : "live MAL writes"}</strong> - MAL: <strong>${tokens ? "authorized" : "not authorized"}</strong>${schedule ? ` - Poll: <strong>${schedule.intervalSeconds}s</strong>` : ""}</p>
-  <h2>Setup</h2>
+  <section class="panel quick-guide">
+    <div class="section-head">
+      <h2>Quick guide</h2>
+      ${infoIcon("The normal flow is Paperback read event -> bridge matching -> MAL outbox. Kavita sync panels are optional and hidden until enabled.")}
+    </div>
+    <p class="muted">Start here: confirm read events arrive, check unresolved external matches, then review the MAL outbox before turning off dry-run.</p>
+  </section>
+  <div class="section-head">
+    <h2>Setup</h2>
+    ${infoIcon("Connect Kavita and MAL, choose dry-run/live mode, and decide whether advanced Kavita sync tables are shown.")}
+  </div>
   <form class="panel" id="settings-form" data-endpoint="/api/settings">
     <div class="row">
-      <label>Kavita URL
+      <label><span class="field-title">Kavita URL ${infoIcon("Only required for Kavita polling or Kavita mirroring. External source reads can still be tested without it.")}</span>
         <input name="kavitaBaseUrl" value="${escapeHtml(settings.kavitaBaseUrl ?? "")}" autocomplete="off" />
       </label>
-      <label>Kavita API key
+      <label><span class="field-title">Kavita API key ${infoIcon("Stored locally in the bridge database. It is never shown back on this page after saving.")}</span>
         <input name="kavitaApiKey" type="password" placeholder="${settings.kavitaApiKey ? "Saved; enter a new key to replace" : ""}" autocomplete="off" />
       </label>
-      <label>Poll interval seconds
+      <label><span class="field-title">Poll interval seconds ${infoIcon("How often the bridge checks Kavita progress in the background. Minimum is 60 seconds.")}</span>
         <input name="pollIntervalSeconds" type="number" min="60" step="60" value="${escapeHtml(settings.pollIntervalSeconds ?? "")}" />
       </label>
-      <label>Max MAL searches per run
+      <label><span class="field-title">Max MAL searches per run ${infoIcon("Safety limit for fuzzy MAL searches. Deterministic IDs still link without using this search budget.")}</span>
         <input name="maxMalSearchesPerRun" type="number" min="1" max="500" step="1" value="${escapeHtml(settings.maxMalSearchesPerRun ?? "")}" />
       </label>
-      <label>Dry run
+      <label><span class="field-title">Dry run ${infoIcon("When true, the bridge previews MAL writes instead of changing your MAL account.")}</span>
         <select name="dryRun">
           <option value="true"${effectiveDryRun ? " selected" : ""}>true</option>
           <option value="false"${!effectiveDryRun ? " selected" : ""}>false</option>
         </select>
       </label>
-      <label>MAL client ID
+      <label><span class="field-title">Show Kavita sync panels ${infoIcon("Shows the long Kavita mapping and review tables. Keep this off when you are mainly testing Paperback read events from source extensions.")}</span>
+        <select name="showKavitaSyncPanels">
+          <option value="false"${!showKavitaSyncPanels ? " selected" : ""}>hide unless needed</option>
+          <option value="true"${showKavitaSyncPanels ? " selected" : ""}>show advanced Kavita panels</option>
+        </select>
+        <span class="help">This only changes the page layout. It does not disable Kavita polling or read-event processing.</span>
+      </label>
+      <label><span class="field-title">MAL client ID ${infoIcon("The client ID from your MyAnimeList API application.")}</span>
         <input name="malClientId" value="${escapeHtml(settings.malClientId ?? "")}" autocomplete="off" />
       </label>
-      <label>MAL client secret
+      <label><span class="field-title">MAL client secret ${infoIcon("Optional for some MAL app setups. Stored locally and hidden after saving.")}</span>
         <input name="malClientSecret" type="password" placeholder="${settings.malClientSecret ? "Saved; enter a new secret to replace" : ""}" autocomplete="off" />
       </label>
-      <label>MAL redirect URI
+      <label><span class="field-title">MAL redirect URI ${infoIcon("Must exactly match the redirect URI configured in the MAL API client.")}</span>
         <input name="malRedirectUri" value="${escapeHtml(settings.malRedirectUri ?? "")}" autocomplete="off" />
       </label>
     </div>
     <button type="submit">Save settings</button>
-    <a class="button" href="/api/mal/oauth/start">Authorize MAL</a>
+    <a class="button" href="/api/mal/oauth/start">Connect MAL</a>
     <button type="button" id="disconnect-mal">Disconnect MAL</button>
-    <button type="button" id="run-sync">Run sync now</button>
+    <button type="button" id="run-sync">Run bridge sync now</button>
     <button type="button" id="check-readiness">Check readiness</button>
     <button type="button" id="preview-kavita">Preview Kavita progress</button>
     <p class="muted" id="form-status"></p>
     <pre class="muted" id="preview-output"></pre>
   </form>
-  <h2>Recent Paperback Read Events</h2>
+  <div class="section-head">
+    <h2>Recent Paperback Read Events</h2>
+    ${infoIcon("These are the read-complete events received from Paperback tracker/provider queues. If a title was read and is missing here, the bridge did not receive it.")}
+  </div>
   <table>
     <thead><tr><th>Received</th><th>Source</th><th>Kind</th><th>Series</th><th>Chapter</th><th>Kavita</th></tr></thead>
     <tbody>${readEvents.map(renderReadEventRow).join("")}</tbody>
   </table>
-  <h2>Source Policies</h2>
+  <div class="section-head">
+    <h2>Source Policies</h2>
+    ${infoIcon("Controls what the bridge may do for each Paperback source. MAL can be enabled while Kavita mirroring stays disabled.")}
+  </div>
   <p>${sourcePolicies.length} Paperback reading source${sourcePolicies.length === 1 ? "" : "s"} observed.</p>
   <table>
     <thead><tr><th>Source</th><th>MAL</th><th>Kavita Mirror</th><th>Save</th></tr></thead>
     <tbody>${sourcePolicies.map(renderSourcePolicyRow).join("")}</tbody>
   </table>
-  <h2>Mappings</h2>
-  <p>${mappings.length} linked Kavita series.</p>
-  <table>
-    <thead><tr><th>Kavita Series</th><th>Title</th><th>MAL ID</th><th>Policy</th><th>Offsets</th><th>Override</th></tr></thead>
-    <tbody>${mappings.map((mapping) => renderMappingRow(mapping)).join("")}</tbody>
-  </table>
-  <h2>External Source Mappings</h2>
+  <div class="section-head">
+    <h2>External Source Mappings</h2>
+    ${infoIcon("Matches from non-Kavita Paperback sources, such as MangaDex or WeebCentral, to MAL titles.")}
+  </div>
   <p>${externalMappings.length} linked Paperback source title${externalMappings.length === 1 ? "" : "s"}.</p>
   <table>
     <thead><tr><th>Source</th><th>Title</th><th>MAL ID</th><th>Policy</th><th>Observed</th><th>Pushed</th></tr></thead>
     <tbody>${externalMappings.map(renderExternalMappingRow).join("")}</tbody>
   </table>
-  <h2>Recent MAL Outbox</h2>
-  <p>${outboxCounts.pending} pending, ${outboxCounts.succeeded} succeeded, ${outboxCounts.failed} failed.</p>
-  <table>
-    <thead><tr><th>Created</th><th>Status</th><th>Target</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
-    <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
-  </table>
-  <h2>Unresolved Matches</h2>
-  <table>
-    <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Approve</th></tr></thead>
-    <tbody>${reviews.map((review) => renderReviewRow(review)).join("")}</tbody>
-  </table>
-  <h2>External Unresolved Matches</h2>
+  <div class="section-head">
+    <h2>External Unresolved Matches</h2>
+    ${infoIcon("External source titles that need a manual MAL choice because automatic matching was not confident enough.")}
+  </div>
   <table>
     <thead><tr><th>Source</th><th>Title</th><th>Reason</th><th>Approve</th></tr></thead>
     <tbody>${externalReviews.map(renderExternalReviewRow).join("")}</tbody>
   </table>
-  <h2>Ignored External Titles</h2>
+  <div class="section-head">
+    <h2>Ignored External Titles</h2>
+    ${infoIcon("External source titles you manually excluded from MAL sync.")}
+  </div>
   <p>${externalIgnored.length} external Paperback source title${externalIgnored.length === 1 ? "" : "s"} are manually excluded from MAL sync.</p>
   <table>
     <thead><tr><th>Source</th><th>Title</th><th>Reason</th><th>Created</th></tr></thead>
     <tbody>${externalIgnored.map(renderExternalIgnoredRow).join("")}</tbody>
   </table>
-  <h2>Ignored Series</h2>
-  <p>${ignored.length} Kavita series are manually excluded from MAL sync.</p>
+  <div class="section-head">
+    <h2>Recent MAL Outbox</h2>
+    ${infoIcon("Queued or recently processed MAL writes. In dry-run mode these are previews, not live MAL changes.")}
+  </div>
+  <p>${outboxCounts.pending} pending, ${outboxCounts.succeeded} succeeded, ${outboxCounts.failed} failed.</p>
   <table>
-    <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Created</th><th>Restore</th></tr></thead>
-    <tbody>${ignored.map(renderIgnoredRow).join("")}</tbody>
+    <thead><tr><th>Created</th><th>Status</th><th>Target</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
+    <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
   </table>
-  <h2>Recent Audit</h2>
+  ${showKavitaSyncPanels ? renderKavitaSyncPanels({ mappings, reviews, ignored }) : renderKavitaSyncHiddenNotice({ mappingCount: mappings.length, reviewCount: reviews.length, ignoredCount: ignored.length })}
+  <div class="section-head">
+    <h2>Recent Audit</h2>
+    ${infoIcon("Short bridge history for troubleshooting matching, settings, and outbox actions.")}
+  </div>
   <table>
     <thead><tr><th>Time</th><th>Type</th><th>Series</th><th>Message</th></tr></thead>
     <tbody>${audit.map((entry) => `<tr><td>${escapeHtml(entry.createdAt)}</td><td>${escapeHtml(entry.type)}</td><td>${entry.kavitaSeriesId ?? ""}</td><td>${escapeHtml(entry.message)}</td></tr>`).join("")}</tbody>
@@ -835,6 +868,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       if (data.pollIntervalSeconds) data.pollIntervalSeconds = Number(data.pollIntervalSeconds);
       if (data.maxMalSearchesPerRun) data.maxMalSearchesPerRun = Number(data.maxMalSearchesPerRun);
       if (data.dryRun) data.dryRun = data.dryRun === "true";
+      if (data.showKavitaSyncPanels) data.showKavitaSyncPanels = data.showKavitaSyncPanels === "true";
       if (data.malEnabled) data.malEnabled = data.malEnabled === "true";
       if (data.malId) data.malId = Number(data.malId);
       if (data.chapterOffset) data.chapterOffset = Number(data.chapterOffset);
@@ -969,6 +1003,58 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   </script>
 </body>
 </html>`;
+}
+
+function infoIcon(text: string): string {
+  const label = escapeHtml(text);
+  return `<span class="info-icon" role="img" aria-label="${label}" title="${label}">i</span>`;
+}
+
+function renderKavitaSyncHiddenNotice(counts: {
+  mappingCount: number;
+  reviewCount: number;
+  ignoredCount: number;
+}): string {
+  return `<section class="panel kavita-hidden" data-section="kavita-sync-hidden">
+    <div class="section-head">
+      <h2>Kavita sync panels hidden</h2>
+      ${infoIcon("Enable Show Kavita sync panels in Setup when you need to review Kavita-to-MAL mappings or Kavita polling results.")}
+    </div>
+    <p class="muted">Hidden right now: ${counts.mappingCount} Kavita mapping${counts.mappingCount === 1 ? "" : "s"}, ${counts.reviewCount} Kavita review item${counts.reviewCount === 1 ? "" : "s"}, and ${counts.ignoredCount} ignored Kavita series.</p>
+  </section>`;
+}
+
+function renderKavitaSyncPanels(input: {
+  mappings: SeriesMappingRecord[];
+  reviews: Awaited<ReturnType<SqliteBridgeStore["listReviews"]>>;
+  ignored: Awaited<ReturnType<SqliteBridgeStore["listIgnoredSeries"]>>;
+}): string {
+  return `<div class="section-head">
+    <h2>Kavita Series Mappings</h2>
+    ${infoIcon("Kavita library series that the bridge matched to MAL. This is separate from external Paperback source tracking.")}
+  </div>
+  <p>${input.mappings.length} linked Kavita series.</p>
+  <table data-section="kavita-mappings">
+    <thead><tr><th>Kavita Series</th><th>Title</th><th>MAL ID</th><th>Policy</th><th>Offsets</th><th>Override</th></tr></thead>
+    <tbody>${input.mappings.map((mapping) => renderMappingRow(mapping)).join("")}</tbody>
+  </table>
+  <div class="section-head">
+    <h2>Kavita Unresolved Matches</h2>
+    ${infoIcon("Kavita series needing manual MAL review. These are hidden by default so external read-event testing stays uncluttered.")}
+  </div>
+  <table data-section="kavita-unresolved">
+    <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Approve</th></tr></thead>
+    <tbody>${input.reviews.map((review) => renderReviewRow(review)).join("")}</tbody>
+  </table>
+  <div class="section-head">
+    <h2>Ignored Kavita Series</h2>
+    ${infoIcon("Kavita series you manually excluded from MAL sync.")}
+  </div>
+  <p>${input.ignored.length} Kavita series are manually excluded from MAL sync.</p>
+  <table data-section="kavita-ignored">
+    <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Created</th><th>Restore</th></tr></thead>
+    <tbody>${input.ignored.map(renderIgnoredRow).join("")}</tbody>
+  </table>`;
 }
 
 function renderMappingRow(mapping: SeriesMappingRecord): string {
