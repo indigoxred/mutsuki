@@ -35,6 +35,43 @@ export interface ReviewRecord {
   createdAt?: string;
 }
 
+export interface ExternalSeriesMappingRecord {
+  readingSourceId: string;
+  sourceMangaId: string;
+  readingSourceName: string;
+  title: string;
+  malId: number;
+  matchMethod: string;
+  confidence: number;
+  locked: boolean;
+  chapterOffset: number;
+  volumeOffset: number;
+  trackingMode: BridgeTrackingMode;
+  lastObservedChapter: number;
+  lastObservedVolume: number;
+  lastPushedChapter: number;
+  lastPushedVolume: number;
+}
+
+export interface ExternalReviewRecord {
+  readingSourceId: string;
+  sourceMangaId: string;
+  readingSourceName: string;
+  title: string;
+  reason: string;
+  candidatesJson: string;
+  createdAt?: string;
+}
+
+export interface ExternalIgnoredSeriesRecord {
+  readingSourceId: string;
+  sourceMangaId: string;
+  readingSourceName: string;
+  title: string;
+  reason: string;
+  createdAt?: string;
+}
+
 export interface IgnoredSeriesRecord {
   kavitaSeriesId: number;
   title: string;
@@ -95,6 +132,44 @@ export class SqliteBridgeStore implements OutboxStore {
         reason TEXT NOT NULL,
         candidates_json TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS external_series_mappings (
+        reading_source_id TEXT NOT NULL,
+        source_manga_id TEXT NOT NULL,
+        reading_source_name TEXT NOT NULL,
+        title TEXT NOT NULL,
+        mal_id INTEGER NOT NULL,
+        match_method TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        locked INTEGER NOT NULL,
+        chapter_offset INTEGER NOT NULL,
+        volume_offset INTEGER NOT NULL,
+        tracking_mode TEXT NOT NULL,
+        last_observed_chapter REAL NOT NULL DEFAULT 0,
+        last_observed_volume REAL NOT NULL DEFAULT 0,
+        last_pushed_chapter INTEGER NOT NULL DEFAULT 0,
+        last_pushed_volume INTEGER NOT NULL DEFAULT 0,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (reading_source_id, source_manga_id)
+      );
+      CREATE TABLE IF NOT EXISTS external_review_queue (
+        reading_source_id TEXT NOT NULL,
+        source_manga_id TEXT NOT NULL,
+        reading_source_name TEXT NOT NULL,
+        title TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        candidates_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (reading_source_id, source_manga_id)
+      );
+      CREATE TABLE IF NOT EXISTS external_ignored_series (
+        reading_source_id TEXT NOT NULL,
+        source_manga_id TEXT NOT NULL,
+        reading_source_name TEXT NOT NULL,
+        title TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (reading_source_id, source_manga_id)
       );
       CREATE TABLE IF NOT EXISTS ignored_series (
         kavita_series_id INTEGER PRIMARY KEY,
@@ -171,6 +246,9 @@ export class SqliteBridgeStore implements OutboxStore {
       );
     `);
     this.addColumnIfMissing("series_mappings", "title", "TEXT");
+    this.addColumnIfMissing("mal_outbox", "target_type", "TEXT");
+    this.addColumnIfMissing("mal_outbox", "target_key", "TEXT");
+    this.addColumnIfMissing("mal_outbox", "target_title", "TEXT");
   }
 
   close(): void {
@@ -267,6 +345,181 @@ export class SqliteBridgeStore implements OutboxStore {
       candidatesJson: row.candidates_json,
       createdAt: row.created_at,
     }));
+  }
+
+  async upsertExternalSeriesMapping(record: ExternalSeriesMappingRecord): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO external_series_mappings (
+            reading_source_id, source_manga_id, reading_source_name, title, mal_id,
+            match_method, confidence, locked, chapter_offset, volume_offset, tracking_mode,
+            last_observed_chapter, last_observed_volume, last_pushed_chapter,
+            last_pushed_volume, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(reading_source_id, source_manga_id) DO UPDATE SET
+            reading_source_name = excluded.reading_source_name,
+            title = excluded.title,
+            mal_id = excluded.mal_id,
+            match_method = excluded.match_method,
+            confidence = excluded.confidence,
+            locked = excluded.locked,
+            chapter_offset = excluded.chapter_offset,
+            volume_offset = excluded.volume_offset,
+            tracking_mode = excluded.tracking_mode,
+            last_observed_chapter = excluded.last_observed_chapter,
+            last_observed_volume = excluded.last_observed_volume,
+            last_pushed_chapter = excluded.last_pushed_chapter,
+            last_pushed_volume = excluded.last_pushed_volume,
+            updated_at = CURRENT_TIMESTAMP
+        `,
+      )
+      .run(
+        record.readingSourceId,
+        record.sourceMangaId,
+        record.readingSourceName,
+        record.title,
+        record.malId,
+        record.matchMethod,
+        record.confidence,
+        record.locked ? 1 : 0,
+        record.chapterOffset,
+        record.volumeOffset,
+        record.trackingMode,
+        record.lastObservedChapter,
+        record.lastObservedVolume,
+        record.lastPushedChapter,
+        record.lastPushedVolume,
+      );
+  }
+
+  async getExternalSeriesMapping(
+    readingSourceId: string,
+    sourceMangaId: string,
+  ): Promise<ExternalSeriesMappingRecord | undefined> {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM external_series_mappings WHERE reading_source_id = ? AND source_manga_id = ?",
+      )
+      .get(readingSourceId, sourceMangaId) as ExternalMappingRow | undefined;
+    return row ? externalMappingFromRow(row) : undefined;
+  }
+
+  async listExternalSeriesMappings(): Promise<ExternalSeriesMappingRecord[]> {
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM external_series_mappings ORDER BY reading_source_name, title, source_manga_id",
+        )
+        .all() as unknown as ExternalMappingRow[]
+    ).map(externalMappingFromRow);
+  }
+
+  async enqueueExternalReview(record: ExternalReviewRecord): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO external_review_queue (
+            reading_source_id, source_manga_id, reading_source_name, title, reason,
+            candidates_json
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(reading_source_id, source_manga_id) DO UPDATE SET
+            reading_source_name = excluded.reading_source_name,
+            title = excluded.title,
+            reason = excluded.reason,
+            candidates_json = excluded.candidates_json
+        `,
+      )
+      .run(
+        record.readingSourceId,
+        record.sourceMangaId,
+        record.readingSourceName,
+        record.title,
+        record.reason,
+        record.candidatesJson,
+      );
+  }
+
+  async getExternalReview(
+    readingSourceId: string,
+    sourceMangaId: string,
+  ): Promise<Required<ExternalReviewRecord> | undefined> {
+    const row = this.db
+      .prepare(
+        "SELECT * FROM external_review_queue WHERE reading_source_id = ? AND source_manga_id = ?",
+      )
+      .get(readingSourceId, sourceMangaId) as ExternalReviewRow | undefined;
+    return row ? externalReviewFromRow(row) : undefined;
+  }
+
+  async deleteExternalReview(readingSourceId: string, sourceMangaId: string): Promise<void> {
+    this.db
+      .prepare(
+        "DELETE FROM external_review_queue WHERE reading_source_id = ? AND source_manga_id = ?",
+      )
+      .run(readingSourceId, sourceMangaId);
+  }
+
+  async listExternalReviews(): Promise<Required<ExternalReviewRecord>[]> {
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM external_review_queue ORDER BY created_at, reading_source_name, title",
+        )
+        .all() as unknown as ExternalReviewRow[]
+    ).map(externalReviewFromRow);
+  }
+
+  async ignoreExternalSeries(record: ExternalIgnoredSeriesRecord): Promise<void> {
+    this.db
+      .prepare(
+        `
+          INSERT INTO external_ignored_series (
+            reading_source_id, source_manga_id, reading_source_name, title, reason, created_at
+          ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+          ON CONFLICT(reading_source_id, source_manga_id) DO UPDATE SET
+            reading_source_name = excluded.reading_source_name,
+            title = excluded.title,
+            reason = excluded.reason
+        `,
+      )
+      .run(
+        record.readingSourceId,
+        record.sourceMangaId,
+        record.readingSourceName,
+        record.title,
+        record.reason,
+      );
+  }
+
+  async isExternalSeriesIgnored(readingSourceId: string, sourceMangaId: string): Promise<boolean> {
+    const row = this.db
+      .prepare(
+        "SELECT 1 AS ignored FROM external_ignored_series WHERE reading_source_id = ? AND source_manga_id = ?",
+      )
+      .get(readingSourceId, sourceMangaId) as { ignored: number } | undefined;
+    return Boolean(row);
+  }
+
+  async listExternalIgnoredSeries(): Promise<Required<ExternalIgnoredSeriesRecord>[]> {
+    return (
+      this.db
+        .prepare(
+          "SELECT * FROM external_ignored_series ORDER BY created_at, reading_source_name, title",
+        )
+        .all() as unknown as ExternalIgnoredSeriesRow[]
+    ).map(externalIgnoredFromRow);
+  }
+
+  async restoreExternalIgnoredSeries(
+    readingSourceId: string,
+    sourceMangaId: string,
+  ): Promise<void> {
+    this.db
+      .prepare(
+        "DELETE FROM external_ignored_series WHERE reading_source_id = ? AND source_manga_id = ?",
+      )
+      .run(readingSourceId, sourceMangaId);
   }
 
   async ignoreSeries(record: IgnoredSeriesRecord): Promise<void> {
@@ -528,14 +781,17 @@ export class SqliteBridgeStore implements OutboxStore {
       .prepare(
         `
           INSERT INTO mal_outbox (
-            id, kavita_series_id, mal_id, update_json, reason, dedup_key, status,
-            attempts, last_error, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, kavita_series_id, target_type, target_key, target_title, mal_id, update_json,
+            reason, dedup_key, status, attempts, last_error, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
         item.id,
         item.kavitaSeriesId,
+        item.targetType,
+        item.targetKey,
+        item.targetTitle ?? null,
         item.malId,
         JSON.stringify(item.update),
         item.reason,
@@ -613,6 +869,28 @@ export class SqliteBridgeStore implements OutboxStore {
       .run(chapter, volume, kavitaSeriesId);
   }
 
+  async recordPushedProgressForTarget(item: BridgeOutboxItem): Promise<void> {
+    if (item.targetType !== "external") {
+      await this.recordPushedProgress(item.kavitaSeriesId, item.update);
+      return;
+    }
+    const parsed = parseExternalTargetKey(item.targetKey);
+    if (!parsed) return;
+    const chapter = item.update.num_chapters_read ?? 0;
+    const volume = item.update.num_volumes_read ?? 0;
+    this.db
+      .prepare(
+        `
+          UPDATE external_series_mappings
+          SET last_pushed_chapter = MAX(last_pushed_chapter, ?),
+            last_pushed_volume = MAX(last_pushed_volume, ?),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE reading_source_id = ? AND source_manga_id = ?
+        `,
+      )
+      .run(chapter, volume, parsed.readingSourceId, parsed.sourceMangaId);
+  }
+
   private addColumnIfMissing(table: string, column: string, definition: string): void {
     const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as unknown as {
       name: string;
@@ -651,6 +929,43 @@ interface ReviewRow {
   title: string;
   reason: string;
   candidates_json: string;
+  created_at: string;
+}
+
+interface ExternalMappingRow {
+  reading_source_id: string;
+  source_manga_id: string;
+  reading_source_name: string;
+  title: string;
+  mal_id: number;
+  match_method: string;
+  confidence: number;
+  locked: number;
+  chapter_offset: number;
+  volume_offset: number;
+  tracking_mode: BridgeTrackingMode;
+  last_observed_chapter: number;
+  last_observed_volume: number;
+  last_pushed_chapter: number;
+  last_pushed_volume: number;
+}
+
+interface ExternalReviewRow {
+  reading_source_id: string;
+  source_manga_id: string;
+  reading_source_name: string;
+  title: string;
+  reason: string;
+  candidates_json: string;
+  created_at: string;
+}
+
+interface ExternalIgnoredSeriesRow {
+  reading_source_id: string;
+  source_manga_id: string;
+  reading_source_name: string;
+  title: string;
+  reason: string;
   created_at: string;
 }
 
@@ -699,6 +1014,9 @@ interface SourcePolicyRow {
 interface OutboxRow {
   id: string;
   kavita_series_id: number;
+  target_type: BridgeOutboxItem["targetType"] | null;
+  target_key: string | null;
+  target_title: string | null;
   mal_id: number;
   update_json: string;
   reason: string;
@@ -747,6 +1065,51 @@ function mappingFromRow(row: MappingRow): SeriesMappingRecord {
   };
 }
 
+function externalMappingFromRow(row: ExternalMappingRow): ExternalSeriesMappingRecord {
+  return {
+    readingSourceId: row.reading_source_id,
+    sourceMangaId: row.source_manga_id,
+    readingSourceName: row.reading_source_name,
+    title: row.title,
+    malId: row.mal_id,
+    matchMethod: row.match_method,
+    confidence: row.confidence,
+    locked: row.locked === 1,
+    chapterOffset: row.chapter_offset,
+    volumeOffset: row.volume_offset,
+    trackingMode: row.tracking_mode,
+    lastObservedChapter: row.last_observed_chapter,
+    lastObservedVolume: row.last_observed_volume,
+    lastPushedChapter: row.last_pushed_chapter,
+    lastPushedVolume: row.last_pushed_volume,
+  };
+}
+
+function externalReviewFromRow(row: ExternalReviewRow): Required<ExternalReviewRecord> {
+  return {
+    readingSourceId: row.reading_source_id,
+    sourceMangaId: row.source_manga_id,
+    readingSourceName: row.reading_source_name,
+    title: row.title,
+    reason: row.reason,
+    candidatesJson: row.candidates_json,
+    createdAt: row.created_at,
+  };
+}
+
+function externalIgnoredFromRow(
+  row: ExternalIgnoredSeriesRow,
+): Required<ExternalIgnoredSeriesRecord> {
+  return {
+    readingSourceId: row.reading_source_id,
+    sourceMangaId: row.source_manga_id,
+    readingSourceName: row.reading_source_name,
+    title: row.title,
+    reason: row.reason,
+    createdAt: row.created_at,
+  };
+}
+
 function readEventFromRow(row: ReadEventRow): BridgeReadEventRecord {
   return {
     schemaVersion: row.schema_version,
@@ -779,9 +1142,13 @@ function sourcePolicyFromRow(row: SourcePolicyRow): SourcePolicyRecord {
 }
 
 function outboxFromRow(row: OutboxRow): BridgeOutboxItem {
+  const targetType = row.target_type === "external" ? "external" : "kavita";
   return {
     id: row.id,
     kavitaSeriesId: row.kavita_series_id,
+    targetType,
+    targetKey: row.target_key ?? `kavita:${row.kavita_series_id}`,
+    targetTitle: row.target_title ?? undefined,
     malId: row.mal_id,
     update: JSON.parse(row.update_json) as BridgeOutboxItem["update"],
     reason: row.reason,
@@ -791,5 +1158,16 @@ function outboxFromRow(row: OutboxRow): BridgeOutboxItem {
     lastError: row.last_error ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function parseExternalTargetKey(
+  targetKey: string,
+): { readingSourceId: string; sourceMangaId: string } | undefined {
+  const match = /^external:([^:]+):(.+)$/u.exec(targetKey);
+  if (!match?.[1] || !match[2]) return undefined;
+  return {
+    readingSourceId: decodeURIComponent(match[1]),
+    sourceMangaId: decodeURIComponent(match[2]),
   };
 }

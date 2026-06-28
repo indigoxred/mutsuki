@@ -5,6 +5,9 @@ export type OutboxStatus = "pending" | "succeeded" | "failed";
 export interface BridgeOutboxItem {
   id: string;
   kavitaSeriesId: number;
+  targetType: "kavita" | "external";
+  targetKey: string;
+  targetTitle?: string;
   malId: number;
   update: BridgeMalProgressUpdate;
   reason: string;
@@ -22,6 +25,7 @@ export interface OutboxStore {
   pending(limit: number): Promise<BridgeOutboxItem[]>;
   update(item: BridgeOutboxItem): Promise<void>;
   recordPushedProgress?(kavitaSeriesId: number, update: BridgeMalProgressUpdate): Promise<void>;
+  recordPushedProgressForTarget?(item: BridgeOutboxItem): Promise<void>;
 }
 
 export interface EnqueuedMalUpdate extends BridgeOutboxItem {
@@ -42,6 +46,9 @@ export async function enqueueMalUpdate(
   store: OutboxStore,
   input: {
     kavitaSeriesId: number;
+    targetType?: BridgeOutboxItem["targetType"];
+    targetKey?: string;
+    targetTitle?: string;
     malId: number;
     update: BridgeMalProgressUpdate;
     reason: string;
@@ -55,6 +62,9 @@ export async function enqueueMalUpdate(
   const item: BridgeOutboxItem = {
     id: `outbox:${hashString(dedupKey)}`,
     kavitaSeriesId: input.kavitaSeriesId,
+    targetType: input.targetType ?? "kavita",
+    targetKey: input.targetKey ?? `kavita:${input.kavitaSeriesId}`,
+    targetTitle: input.targetTitle,
     malId: input.malId,
     update: input.update,
     reason: input.reason,
@@ -93,7 +103,11 @@ export async function processOutboxOnce(input: {
 
     const result = await input.updateMal(item.malId, item.update);
     if (result.ok) {
-      await input.store.recordPushedProgress?.(item.kavitaSeriesId, item.update);
+      if (input.store.recordPushedProgressForTarget) {
+        await input.store.recordPushedProgressForTarget(item);
+      } else {
+        await input.store.recordPushedProgress?.(item.kavitaSeriesId, item.update);
+      }
       const updated = markSucceeded(item, input.now?.() ?? new Date(), "");
       await input.store.update(updated);
       await auditOutbox(input.audit, updated, "MAL update pushed.");
@@ -158,6 +172,8 @@ function markFailedRetryable(
 
 function stableDedupKey(input: {
   kavitaSeriesId: number;
+  targetType?: BridgeOutboxItem["targetType"];
+  targetKey?: string;
   malId: number;
   update: BridgeMalProgressUpdate;
 }): string {
@@ -165,7 +181,9 @@ function stableDedupKey(input: {
     .sort()
     .map((key) => `${key}:${String(input.update[key as keyof BridgeMalProgressUpdate])}`)
     .join("|");
-  return `${input.kavitaSeriesId}:${input.malId}:${update}`;
+  const targetType = input.targetType ?? "kavita";
+  const targetKey = input.targetKey ?? `kavita:${input.kavitaSeriesId}`;
+  return `${targetType}:${targetKey}:${input.malId}:${update}`;
 }
 
 function hashString(value: string): string {

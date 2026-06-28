@@ -83,6 +83,38 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
       readingSourceName: "MangaDex",
       kavitaMirrorMode: "disabled",
     });
+    await store.upsertExternalSeriesMapping({
+      readingSourceId: "MangaDex",
+      sourceMangaId: "mangadex-title-1",
+      readingSourceName: "MangaDex",
+      title: "External Story",
+      malId: 321,
+      matchMethod: "title-search",
+      confidence: 0.95,
+      locked: false,
+      chapterOffset: 0,
+      volumeOffset: 0,
+      trackingMode: "chapter-and-volume",
+      lastObservedChapter: 5,
+      lastObservedVolume: 0,
+      lastPushedChapter: 0,
+      lastPushedVolume: 0,
+    });
+    await store.enqueueExternalReview({
+      readingSourceId: "WeebCentral",
+      sourceMangaId: "weeb-title-1",
+      readingSourceName: "WeebCentral",
+      title: "Needs External Review",
+      reason: "ambiguous-or-low-confidence",
+      candidatesJson: "[]",
+    });
+    await store.ignoreExternalSeries({
+      readingSourceId: "MangaDex",
+      sourceMangaId: "ignored-title-1",
+      readingSourceName: "MangaDex",
+      title: "Ignored External Story",
+      reason: "manual-ignore",
+    });
 
     const reopened = new SqliteBridgeStore(dbPath);
     reopened.migrate();
@@ -130,6 +162,26 @@ test("SQLite store persists mappings, outbox items, review queue, and audit logs
     const policy = await reopened.getSourcePolicy("MangaDex");
     assert.equal(policy?.malEnabled, true);
     assert.equal(policy?.kavitaMirrorMode, "disabled");
+    assert.equal((await reopened.listExternalSeriesMappings())[0]?.malId, 321);
+    assert.equal((await reopened.listExternalReviews())[0]?.title, "Needs External Review");
+    assert.equal(await reopened.isExternalSeriesIgnored("MangaDex", "ignored-title-1"), true);
+    assert.equal((await reopened.listExternalIgnoredSeries())[0]?.title, "Ignored External Story");
+    await enqueueMalUpdate(reopened, {
+      kavitaSeriesId: -77,
+      targetType: "external",
+      targetKey: "external:MangaDex:mangadex-title-1",
+      targetTitle: "External Story",
+      malId: 321,
+      update: { num_chapters_read: 8 },
+      reason: "paperback-external-read-event",
+    });
+    await processOutboxOnce({
+      store: reopened,
+      dryRun: false,
+      updateMal: async () => ({ ok: true }),
+    });
+    const externalMapping = await reopened.getExternalSeriesMapping("MangaDex", "mangadex-title-1");
+    assert.equal(externalMapping?.lastPushedChapter, 8);
 
     store.close();
     reopened.close();

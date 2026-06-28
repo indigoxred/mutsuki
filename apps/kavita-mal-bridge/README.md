@@ -12,6 +12,8 @@ SQLite-backed outbox.
 - Local setup UI for Kavita, MAL OAuth client settings, dry-run mode, and poll interval.
 - `POST /api/progress-events` for events forwarded by Mutsuki Progress Bridge.
 - Source policy controls for MAL enable/disable and optional Kavita mirroring.
+- External Paperback source event matching, external mapping persistence, and a separate external
+  unresolved-match review queue with per-title ignore support.
 - MAL OAuth callback handling with persisted access/refresh tokens.
 - MAL OAuth disconnect/re-authorize support for stale or incorrect tokens.
 - Token refresh before scheduled/manual sync runs.
@@ -87,15 +89,19 @@ the next scheduled/manual sync can try again.
 To test Paperback tracker events, point the Mutsuki Progress Bridge tracker extension at this same
 base URL. The bridge records those events under **Recent Paperback Read Events**. External sources
 default to `Kavita mirror: disabled`, so reads from sources that are not in Kavita do not create
-Kavita mismatch clutter. The MAL polling path remains Kavita-based until the external read-event
-matching worker is enabled in a later pass.
+Kavita mismatch clutter. MAL handling is enabled per source by default; disable it from **Source
+Policies** for sources you do not want to track. High-confidence external source events are linked
+and queued through the MAL outbox, while ambiguous titles appear under **External Unresolved
+Matches** for manual approval or ignore.
 
 ## API
 
 - `GET /api/status`
 - `GET /api/readiness`
 - `GET /api/mappings`
+- `GET /api/external-mappings`
 - `GET /api/unresolved-matches`
+- `GET /api/external-unresolved-matches`
 - `GET /api/outbox`
 - `GET /api/audit-log`
 - `GET /api/progress-events`
@@ -109,6 +115,7 @@ matching worker is enabled in a later pass.
 - `GET /api/mal/oauth/callback`
 - `POST /api/mal/oauth/disconnect`
 - `POST /api/unresolved-matches/:kavitaSeriesId/approve`
+- `POST /api/external-unresolved-matches/:readingSourceId/:sourceMangaId/approve`
 - `POST /api/mappings/:kavitaSeriesId`
 
 ## Unraid Notes

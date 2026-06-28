@@ -2,9 +2,9 @@
 
 This guide deploys the production Kavita-to-MyAnimeList bridge.
 
-The bridge polls Kavita as the progress source of truth, maps Kavita series to MAL, and queues
-monotonic MAL updates through SQLite. Keep dry-run enabled until mappings, review queue entries, and
-outbox rows look correct.
+The bridge polls Kavita as the progress source of truth, maps Kavita series to MAL, receives
+Paperback tracker read events, and queues monotonic MAL updates through SQLite. Keep dry-run enabled
+until mappings, review queue entries, source policies, and outbox rows look correct.
 
 ## Container
 
@@ -100,6 +100,9 @@ container is reachable.
 7. Review:
 
    - **Unresolved Matches**
+   - **External Unresolved Matches**
+   - **External Source Mappings**
+   - **Source Policies**
    - **Recent MAL Outbox**
    - **Audit Log**
    - existing mappings and manual overrides
@@ -112,6 +115,10 @@ container is reachable.
 - Do not use the existing Paperback `Mutsuki MyAnimeList` tracker for the same MAL titles while the
   bridge is writing to MAL. Pick one writer so progress updates do not race.
 - Low-confidence or conflicting matches stay in the review queue and are not pushed to MAL.
+- External Paperback source events use a separate mapping/review queue and do not require a Kavita
+  match. Disable MAL for a source in **Source Policies** if you only want to observe its read events.
+- Kavita mirroring for external sources defaults to disabled so titles that are not in Kavita do not
+  clutter Kavita matching/review state.
 - New MAL title-search requests are capped per sync run. Existing review-queue entries are skipped
   until you approve, ignore, or override them, so scheduled syncs can advance through large Kavita
   libraries without repeatedly querying MAL for the same unresolved titles.

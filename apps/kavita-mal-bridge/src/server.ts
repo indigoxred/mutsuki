@@ -17,6 +17,10 @@ import {
   exchangeMalAuthorizationCode,
   type OAuthTransport,
 } from "./oauth.js";
+import {
+  processExternalReadEvent,
+  type ExternalReadEventProcessResult,
+} from "./external-events.js";
 import type { BridgeTrackingMode } from "./policy.js";
 import {
   assertBridgeSyncReady,
@@ -27,10 +31,17 @@ import {
   defaultSourcePolicyForEvent,
   parseBridgeReadEvent,
   sourcePolicyFromInput,
+  type BridgeReadEventRecord,
+  type SourcePolicyRecord,
 } from "./progress-events.js";
 import { BridgeScheduler, type BridgeSchedulerResult } from "./scheduler.js";
 import { runBridgeSyncOnce, type BridgeObservedSeries, type BridgeSyncResult } from "./sync.js";
-import { SqliteBridgeStore, type SeriesMappingRecord } from "./storage.js";
+import {
+  SqliteBridgeStore,
+  type ExternalReviewRecord,
+  type ExternalSeriesMappingRecord,
+  type SeriesMappingRecord,
+} from "./storage.js";
 import type { ScoredMalCandidate } from "./matching.js";
 
 export interface KavitaMalBridgeServerOptions {
@@ -40,6 +51,10 @@ export interface KavitaMalBridgeServerOptions {
   oauthTransport?: OAuthTransport;
   checkReadiness?: () => Promise<BridgeReadinessResult>;
   previewKavitaProgress?: (limit: number) => Promise<BridgeObservedSeries[]>;
+  processReadEvent?: (
+    event: BridgeReadEventRecord,
+    policy: SourcePolicyRecord,
+  ) => Promise<ExternalReadEventProcessResult | undefined>;
   schedulerStatus?: () => { intervalMs: number; lastResult?: BridgeSchedulerResult };
   onSettingsSaved?: () => Promise<void> | void;
 }
@@ -61,6 +76,8 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         const settings = await options.store.listSettings();
         const tokens = await options.store.getOAuthTokens();
         const outbox = await options.store.outboxCounts();
+        const externalReviews = await options.store.listExternalReviews();
+        const externalIgnored = await options.store.listExternalIgnoredSeries();
         await respondJson(response, {
           dryRun: settingBoolean(settings.dryRun, options.dryRun),
           kavitaConfigured: Boolean(settings.kavitaBaseUrl && settings.kavitaApiKey),
@@ -70,6 +87,9 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           maxMalSearchesPerRun: positiveIntegerSetting(settings.maxMalSearchesPerRun),
           mappings: (await options.store.listSeriesMappings()).length,
           unresolved: (await options.store.listReviews()).length,
+          externalMappings: (await options.store.listExternalSeriesMappings()).length,
+          externalUnresolved: externalReviews.length,
+          externalIgnored: externalIgnored.length,
           ignored: (await options.store.listIgnoredSeries()).length,
           readEvents: await options.store.readEventCount(),
           sourcePolicies: (await options.store.listSourcePolicies()).length,
@@ -87,7 +107,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
       if (request.method === "POST" && url.pathname === "/api/progress-events") {
         const event = parseBridgeReadEvent(parseJsonRecord(await readRequestBody(request)));
         await options.store.appendReadEvent(event);
-        await options.store.ensureSourcePolicy(defaultSourcePolicyForEvent(event));
+        const policy = await options.store.ensureSourcePolicy(defaultSourcePolicyForEvent(event));
         await options.store.audit({
           type: "progress",
           kavitaSeriesId: event.kavitaSeriesId,
@@ -100,7 +120,8 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
             sourceChapterId: event.sourceChapterId,
           }),
         });
-        await respondJson(response, { ok: true, event }, 202);
+        const processing = await processReadEventSafely(options, event, policy);
+        await respondJson(response, { ok: true, event, processing }, 202);
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/source-policies") {
@@ -167,8 +188,17 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         await respondJson(response, { items: await options.store.listSeriesMappings() });
         return;
       }
+      if (request.method === "GET" && url.pathname === "/api/external-mappings") {
+        await respondJson(response, { items: await options.store.listExternalSeriesMappings() });
+        return;
+      }
       if (request.method === "GET" && url.pathname === "/api/unresolved-matches") {
         const items = (await options.store.listReviews()).map(reviewResponseItem);
+        await respondJson(response, { items });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/external-unresolved-matches") {
+        const items = (await options.store.listExternalReviews()).map(externalReviewResponseItem);
         await respondJson(response, { items });
         return;
       }
@@ -312,6 +342,53 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
         await respondJson(response, { ok: true, mapping });
         return;
       }
+      const approveExternalMatch =
+        /^\/api\/external-unresolved-matches\/([^/]+)\/([^/]+)\/approve$/u.exec(url.pathname);
+      if (request.method === "POST" && approveExternalMatch?.[1] && approveExternalMatch[2]) {
+        const readingSourceId = decodeURIComponent(approveExternalMatch[1]);
+        const sourceMangaId = decodeURIComponent(approveExternalMatch[2]);
+        const body = parseJsonRecord(await readRequestBody(request));
+        const review = await options.store.getExternalReview(readingSourceId, sourceMangaId);
+        const mapping = externalMappingFromApproval(readingSourceId, sourceMangaId, body, review);
+        await options.store.upsertExternalSeriesMapping(mapping);
+        await options.store.deleteExternalReview(readingSourceId, sourceMangaId);
+        await options.store.audit({
+          type: "match",
+          message: `Manual external MAL mapping approved for ${mapping.malId}.`,
+          dataJson: JSON.stringify({
+            readingSourceId,
+            sourceMangaId,
+            malId: mapping.malId,
+          }),
+        });
+        await respondJson(response, { ok: true, mapping });
+        return;
+      }
+      const ignoreExternalMatch =
+        /^\/api\/external-unresolved-matches\/([^/]+)\/([^/]+)\/ignore$/u.exec(url.pathname);
+      if (request.method === "POST" && ignoreExternalMatch?.[1] && ignoreExternalMatch[2]) {
+        const readingSourceId = decodeURIComponent(ignoreExternalMatch[1]);
+        const sourceMangaId = decodeURIComponent(ignoreExternalMatch[2]);
+        const review = await options.store.getExternalReview(readingSourceId, sourceMangaId);
+        await options.store.ignoreExternalSeries({
+          readingSourceId,
+          sourceMangaId,
+          readingSourceName: review?.readingSourceName ?? readingSourceId,
+          title: review?.title ?? `${readingSourceId} ${sourceMangaId}`,
+          reason: "manual-ignore",
+        });
+        await options.store.deleteExternalReview(readingSourceId, sourceMangaId);
+        await options.store.audit({
+          type: "review",
+          message: "Manual external review ignored; title will not be synced to MAL.",
+          dataJson: JSON.stringify({
+            readingSourceId,
+            sourceMangaId,
+          }),
+        });
+        await respondJson(response, { ok: true });
+        return;
+      }
       const ignoreMatch = /^\/api\/unresolved-matches\/(\d+)\/ignore$/u.exec(url.pathname);
       if (request.method === "POST" && ignoreMatch?.[1]) {
         const kavitaSeriesId = Number(ignoreMatch[1]);
@@ -400,6 +477,32 @@ async function kavitaProgressPreview(
   return createKavitaClient(config).listSeries({ limit });
 }
 
+async function processReadEventSafely(
+  options: KavitaMalBridgeServerOptions,
+  event: BridgeReadEventRecord,
+  policy: SourcePolicyRecord,
+): Promise<ExternalReadEventProcessResult | undefined> {
+  if (!options.processReadEvent) return undefined;
+  try {
+    return await options.processReadEvent(event, policy);
+  } catch (error) {
+    await options.store.audit({
+      type: "progress",
+      kavitaSeriesId: event.kavitaSeriesId,
+      message: "Paperback read event was stored but downstream processing failed.",
+      dataJson: JSON.stringify({
+        actionId: event.actionId,
+        readingSourceId: event.readingSourceId,
+        readingSourceKind: event.readingSourceKind,
+        sourceMangaId: event.sourceMangaId,
+        sourceChapterId: event.sourceChapterId,
+        error: safeErrorBody(error).error,
+      }),
+    });
+    return { status: "skipped", reason: "no-progress-update" };
+  }
+}
+
 function observedProgressResponseItem(item: BridgeObservedSeries): Record<string, unknown> {
   return {
     kavitaSeriesId: item.kavitaSeriesId,
@@ -463,6 +566,36 @@ function mappingFromApproval(
   return {
     kavitaSeriesId,
     title,
+    malId,
+    matchMethod: "manual",
+    confidence: 1,
+    locked: true,
+    chapterOffset: Math.floor(numberBodyField(body, "chapterOffset") ?? 0),
+    volumeOffset: Math.floor(numberBodyField(body, "volumeOffset") ?? 0),
+    trackingMode: trackingModeBodyField(body.trackingMode),
+    lastObservedChapter: 0,
+    lastObservedVolume: 0,
+    lastPushedChapter: 0,
+    lastPushedVolume: 0,
+  };
+}
+
+function externalMappingFromApproval(
+  readingSourceId: string,
+  sourceMangaId: string,
+  body: Record<string, unknown>,
+  review: Required<ExternalReviewRecord> | undefined,
+): ExternalSeriesMappingRecord {
+  const malId = numberBodyField(body, "malId");
+  if (!readingSourceId || !sourceMangaId) throw new Error("Invalid external source key.");
+  if (malId === undefined || !Number.isSafeInteger(malId) || malId <= 0) {
+    throw new Error("Invalid MAL id.");
+  }
+  return {
+    readingSourceId,
+    sourceMangaId,
+    readingSourceName: review?.readingSourceName ?? readingSourceId,
+    title: review?.title ?? `${readingSourceId} ${sourceMangaId}`,
     malId,
     matchMethod: "manual",
     confidence: 1,
@@ -552,6 +685,9 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     outboxCounts,
     readEvents,
     sourcePolicies,
+    externalMappings,
+    externalReviews,
+    externalIgnored,
   ] = await Promise.all([
     options.store.listSeriesMappings(),
     options.store.listReviews(),
@@ -562,6 +698,9 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     options.store.outboxCounts(),
     options.store.listReadEvents(25),
     options.store.listSourcePolicies(),
+    options.store.listExternalSeriesMappings(),
+    options.store.listExternalReviews(),
+    options.store.listExternalIgnoredSeries(),
   ]);
   const ignored = await options.store.listIgnoredSeries();
   const effectiveDryRun = settingBoolean(settings.dryRun, options.dryRun);
@@ -647,16 +786,33 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <thead><tr><th>Kavita Series</th><th>Title</th><th>MAL ID</th><th>Policy</th><th>Offsets</th><th>Override</th></tr></thead>
     <tbody>${mappings.map((mapping) => renderMappingRow(mapping)).join("")}</tbody>
   </table>
+  <h2>External Source Mappings</h2>
+  <p>${externalMappings.length} linked Paperback source title${externalMappings.length === 1 ? "" : "s"}.</p>
+  <table>
+    <thead><tr><th>Source</th><th>Title</th><th>MAL ID</th><th>Policy</th><th>Observed</th><th>Pushed</th></tr></thead>
+    <tbody>${externalMappings.map(renderExternalMappingRow).join("")}</tbody>
+  </table>
   <h2>Recent MAL Outbox</h2>
   <p>${outboxCounts.pending} pending, ${outboxCounts.succeeded} succeeded, ${outboxCounts.failed} failed.</p>
   <table>
-    <thead><tr><th>Created</th><th>Status</th><th>Kavita Series</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
+    <thead><tr><th>Created</th><th>Status</th><th>Target</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
     <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
   </table>
   <h2>Unresolved Matches</h2>
   <table>
     <thead><tr><th>Kavita Series</th><th>Title</th><th>Reason</th><th>Approve</th></tr></thead>
     <tbody>${reviews.map((review) => renderReviewRow(review)).join("")}</tbody>
+  </table>
+  <h2>External Unresolved Matches</h2>
+  <table>
+    <thead><tr><th>Source</th><th>Title</th><th>Reason</th><th>Approve</th></tr></thead>
+    <tbody>${externalReviews.map(renderExternalReviewRow).join("")}</tbody>
+  </table>
+  <h2>Ignored External Titles</h2>
+  <p>${externalIgnored.length} external Paperback source title${externalIgnored.length === 1 ? "" : "s"} are manually excluded from MAL sync.</p>
+  <table>
+    <thead><tr><th>Source</th><th>Title</th><th>Reason</th><th>Created</th></tr></thead>
+    <tbody>${externalIgnored.map(renderExternalIgnoredRow).join("")}</tbody>
   </table>
   <h2>Ignored Series</h2>
   <p>${ignored.length} Kavita series are manually excluded from MAL sync.</p>
@@ -837,6 +993,10 @@ function renderMappingRow(mapping: SeriesMappingRecord): string {
   </td></tr>`;
 }
 
+function renderExternalMappingRow(mapping: ExternalSeriesMappingRecord): string {
+  return `<tr><td>${escapeHtml(mapping.readingSourceName)}<br /><code>${escapeHtml(mapping.sourceMangaId)}</code></td><td>${escapeHtml(mapping.title)}</td><td>${mapping.malId}</td><td>${escapeHtml(mapping.trackingMode)}</td><td>chapter ${formatBridgeNumber(mapping.lastObservedChapter)}, volume ${formatBridgeNumber(mapping.lastObservedVolume)}</td><td>chapter ${mapping.lastPushedChapter}, volume ${mapping.lastPushedVolume}</td></tr>`;
+}
+
 function renderOutboxRow(
   item: Awaited<ReturnType<SqliteBridgeStore["listOutbox"]>>[number],
 ): string {
@@ -844,7 +1004,11 @@ function renderOutboxRow(
     item.status === "failed"
       ? `<form class="outbox-retry-form" data-endpoint="/api/outbox/${encodeURIComponent(item.id)}/retry"><button type="submit">Retry</button></form>`
       : "";
-  return `<tr><td>${escapeHtml(item.createdAt)}</td><td>${escapeHtml(item.status)}</td><td>${item.kavitaSeriesId}</td><td>${item.malId}</td><td>${escapeHtml(JSON.stringify(item.update))}</td><td>${item.attempts}</td><td>${escapeHtml(item.lastError ?? "")}</td><td>${action}</td></tr>`;
+  const target =
+    item.targetType === "external"
+      ? `${item.targetTitle ? `${escapeHtml(item.targetTitle)}<br />` : ""}<code>${escapeHtml(item.targetKey)}</code>`
+      : `Kavita series ${item.kavitaSeriesId}`;
+  return `<tr><td>${escapeHtml(item.createdAt)}</td><td>${escapeHtml(item.status)}</td><td>${target}</td><td>${item.malId}</td><td>${escapeHtml(JSON.stringify(item.update))}</td><td>${item.attempts}</td><td>${escapeHtml(item.lastError ?? "")}</td><td>${action}</td></tr>`;
 }
 
 function renderSourcePolicyRow(
@@ -916,11 +1080,50 @@ function renderReviewRow(
   </td></tr>`;
 }
 
+function renderExternalReviewRow(review: Required<ExternalReviewRecord>): string {
+  const candidates = parseReviewCandidates(review.candidatesJson);
+  const candidate = firstReviewCandidate(candidates);
+  const endpoint = `/api/external-unresolved-matches/${encodeURIComponent(review.readingSourceId)}/${encodeURIComponent(review.sourceMangaId)}/approve`;
+  const ignoreEndpoint = `/api/external-unresolved-matches/${encodeURIComponent(review.readingSourceId)}/${encodeURIComponent(review.sourceMangaId)}/ignore`;
+  return `<tr><td>${escapeHtml(review.readingSourceName)}<br /><code>${escapeHtml(review.sourceMangaId)}</code></td><td>${escapeHtml(review.title)}</td><td>${escapeHtml(review.reason)}</td><td>
+    <form class="approval-form" data-endpoint="${endpoint}">
+      <input name="malId" type="number" min="1" placeholder="MAL ID" value="${candidate?.malId ?? ""}" />
+      <select name="trackingMode">
+        <option value="chapter-and-volume">chapter and volume</option>
+        <option value="chapter-only">chapter only</option>
+        <option value="volume-only">volume only</option>
+        <option value="disabled">disabled</option>
+      </select>
+      <input name="chapterOffset" type="number" step="1" value="0" />
+      <input name="volumeOffset" type="number" step="1" value="0" />
+      <button type="submit">Approve</button>
+      ${renderReviewCandidates(candidates)}
+    </form>
+    <form class="ignore-form" data-endpoint="${ignoreEndpoint}">
+      <button type="submit">Ignore</button>
+    </form>
+  </td></tr>`;
+}
+
 function reviewResponseItem(
   review: Awaited<ReturnType<SqliteBridgeStore["listReviews"]>>[number],
 ): Record<string, unknown> {
   return {
     kavitaSeriesId: review.kavitaSeriesId,
+    title: review.title,
+    reason: review.reason,
+    createdAt: review.createdAt,
+    candidates: parseReviewCandidates(review.candidatesJson),
+  };
+}
+
+function externalReviewResponseItem(
+  review: Required<ExternalReviewRecord>,
+): Record<string, unknown> {
+  return {
+    readingSourceId: review.readingSourceId,
+    sourceMangaId: review.sourceMangaId,
+    readingSourceName: review.readingSourceName,
     title: review.title,
     reason: review.reason,
     createdAt: review.createdAt,
@@ -991,6 +1194,12 @@ function renderIgnoredRow(
       <button type="submit">Restore</button>
     </form>
   </td></tr>`;
+}
+
+function renderExternalIgnoredRow(
+  ignored: Awaited<ReturnType<SqliteBridgeStore["listExternalIgnoredSeries"]>>[number],
+): string {
+  return `<tr><td>${escapeHtml(ignored.readingSourceName)}<br /><code>${escapeHtml(ignored.sourceMangaId)}</code></td><td>${escapeHtml(ignored.title)}</td><td>${escapeHtml(ignored.reason)}</td><td>${escapeHtml(ignored.createdAt)}</td></tr>`;
 }
 
 async function respondJson(response: ServerResponse, body: unknown, status = 200): Promise<void> {
@@ -1067,6 +1276,12 @@ async function startFromEnv(): Promise<void> {
     store,
     dryRun: baseConfig.dryRun,
     runSync,
+    processReadEvent: async (event, policy) => {
+      await refreshStoredMalTokenIfNeeded({ baseConfig, store });
+      const config = await effectiveBridgeConfig(baseConfig, store);
+      const mal = createMalClient(config);
+      return processExternalReadEvent({ store, mal, event, policy });
+    },
     schedulerStatus: () => ({
       intervalMs: scheduler.currentIntervalMs,
       lastResult: scheduler.lastResult,

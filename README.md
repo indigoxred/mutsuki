@@ -12,7 +12,8 @@ It also includes one Docker-hosted bridge app:
 
 - `apps/kavita-mal-bridge`: the Phase 2 production bridge foundation which polls Kavita as the
   progress source of truth, receives normalized Paperback read events, stores source
-  policies/mappings/outbox/audit/OAuth state in SQLite, and prepares monotonic MAL updates.
+  policies/mappings/outbox/audit/OAuth state in SQLite, and prepares monotonic MAL updates for both
+  Kavita polling and approved external Paperback source events.
 
 Automatic read-completion delivery from Paperback to the original Kavita source is not available in
 the observed runtime, so the production bridge currently depends on Kavita progress being updated by
@@ -107,6 +108,9 @@ The production bridge also accepts Paperback tracker events at `POST /api/progre
 shows them in **Recent Paperback Read Events**. Each observed Paperback source gets a **Source
 Policies** row. MAL handling can be disabled per source, and Kavita mirroring defaults to disabled
 for external sources so titles that are not in Kavita do not clutter a Kavita review queue.
+External source events can auto-link to MAL when the match is high-confidence, queue monotonic MAL
+updates through the same outbox, or land in a separate **External Unresolved Matches** review queue
+when the match is ambiguous.
 
 Use **Preview Kavita progress** on the setup page, or call
 `GET /api/kavita/observed-progress?limit=25`, to verify the bridge can read Kavita's observed

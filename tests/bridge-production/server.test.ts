@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { enqueueMalUpdate } from "../../apps/kavita-mal-bridge/src/outbox.js";
+import { processExternalReadEvent } from "../../apps/kavita-mal-bridge/src/external-events.js";
 import { createKavitaMalBridgeServer } from "../../apps/kavita-mal-bridge/src/server.js";
 import { SqliteBridgeStore } from "../../apps/kavita-mal-bridge/src/storage.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -212,6 +213,145 @@ test("bridge server receives Paperback read events with source identity and defa
       html.indexOf("Recent Paperback Read Events") < html.indexOf("Mappings"),
       "recent read events should be visible before the long mappings table",
     );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server processes external Paperback read events into MAL outbox work", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+    processReadEvent: (event, policy) =>
+      processExternalReadEvent({
+        store,
+        event,
+        policy,
+        mal: {
+          searchManga: async () => [
+            {
+              malId: 3333,
+              title: "External Story",
+              altTitles: ["External Story"],
+              mediaType: "manga",
+            },
+          ],
+          getCurrentProgress: async () => ({
+            chaptersRead: 2,
+            volumesRead: 0,
+            status: "plan_to_read",
+          }),
+          updateProgress: async () => {
+            throw new Error("server event processing must enqueue, not write directly");
+          },
+        },
+      }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/progress-events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schemaVersion: 2,
+        eventSource: "paperback-progress-bridge",
+        actionId: "mangadex-read-5",
+        occurredAt: "2026-06-28T00:00:00.000Z",
+        receivedAt: "2026-06-28T00:00:01.000Z",
+        mangaId: "bridge-track:external-story",
+        paperbackChapterId: "chapter-5",
+        readingSourceId: "MangaDex",
+        readingSourceName: "MangaDex",
+        readingSourceKind: "external",
+        sourceMangaId: "mangadex-title-1",
+        sourceChapterId: "chapter-5",
+        sourceChapterNumber: 5,
+        sourceTitle: "External Story",
+        chapterKind: "manga",
+        chapterNum: 5,
+      }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 202);
+    assert.equal(body.processing.status, "queued");
+    assert.equal((await store.listExternalSeriesMappings())[0]?.malId, 3333);
+    const outbox = await store.listOutbox();
+    assert.equal(outbox.length, 1);
+    assert.equal(outbox[0]?.targetType, "external");
+    assert.equal(outbox[0]?.targetKey, "external:MangaDex:mangadex-title-1");
+    assert.deepEqual(outbox[0]?.update, {
+      num_chapters_read: 5,
+      status: "reading",
+    });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server can ignore an unresolved external source match", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  await store.enqueueExternalReview({
+    readingSourceId: "MangaDex",
+    sourceMangaId: "mangadex-title-1",
+    readingSourceName: "MangaDex",
+    title: "External Story",
+    reason: "ambiguous-or-low-confidence",
+    candidatesJson: "[]",
+  });
+
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(
+      `http://127.0.0.1:${port}/api/external-unresolved-matches/MangaDex/mangadex-title-1/ignore`,
+      {
+        method: "POST",
+      },
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal((await store.listExternalReviews()).length, 0);
+    assert.equal(await store.isExternalSeriesIgnored("MangaDex", "mangadex-title-1"), true);
+    assert.equal((await store.listExternalIgnoredSeries())[0]?.title, "External Story");
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();

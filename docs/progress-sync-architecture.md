@@ -104,8 +104,9 @@ Events must not contain:
 ## Future Production Bridge
 
 The Phase 2 bridge foundation lives in `apps/kavita-mal-bridge`. It builds on this
-event/progress model but uses Kavita as the source of truth by polling Kavita progress. It currently
-includes:
+event/progress model but uses Kavita as the source of truth by polling Kavita progress where Kavita
+identity is known, and by separately processing approved external Paperback tracker events where no
+Kavita identity exists. It currently includes:
 
 - SQLite storage;
 - Kavita API polling for series metadata and observed progress fields;
@@ -134,6 +135,11 @@ includes:
 - durable `read_events` storage and source-policy rows keyed by `readingSourceId`;
 - per-source MAL enable/disable and Kavita mirror policy controls, with Kavita mirroring disabled
   by default for external Paperback sources;
+- automatic MAL matching for external Paperback source events when the match is high-confidence;
+- separate external-source mapping and unresolved-review tables so MangaDex, WeebCentral, and other
+  source events do not clutter Kavita review queues;
+- per-title external ignore state for low-confidence external exceptions that should not sync;
+- external read-event outbox rows that preserve the original Paperback source id and source manga id;
 - progress extraction from current Kavita `VolumeDto`/`ChapterDto` fields via
   `/api/Series/volumes?seriesId=...`, including fully read volume/chapter detection, standalone
   EPUB sentinel volume detection, and ignoring special chapters for chapter high-water marks.
@@ -150,8 +156,8 @@ Live validation on 2026-06-26 against the user's Kavita server confirmed:
 - decimal physical volumes are floored conservatively for MAL's integer volume progress field.
 
 The next hardening pass should improve the Web UI around filtering, searching, and bulk-editing
-mappings, and wire external Paperback read events into MAL matching/outbox processing without
-requiring a Kavita match. Missing Kavita mappings must not block external-source MAL tracking.
+mappings. External Paperback read events now feed MAL matching/outbox processing without requiring a
+Kavita match. Missing Kavita mappings do not block external-source MAL tracking.
 
 Default policies:
 
