@@ -301,7 +301,9 @@ test("bridge server receives Paperback read events with source identity and defa
     assert.match(html, /Recent Paperback Read Events/u);
     assert.match(html, /Source Policies/u);
     assert.match(html, /External Story/u);
-    assert.match(html, /approved-external-mappings/u);
+    assert.match(html, /MangaDex/u);
+    assert.doesNotMatch(html, /approved-external-mappings/u);
+    assert.doesNotMatch(html, /Kavita Mirror/u);
     assert.ok(
       html.indexOf("Recent Paperback Read Events") < html.indexOf("External Source Mappings"),
       "recent read events should be visible before mapping tables",
@@ -721,11 +723,17 @@ test("bridge home hides Kavita sync panels by default while keeping external tra
 
     const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
 
-    assert.match(html, /Show Kavita sync panels/u);
+    assert.match(html, /data-tab-target="settings"/u);
+    assert.match(html, /data-tab-target="kavita"/u);
+    assert.match(html, /Enable Kavita tools/u);
     assert.match(html, /Kavita sync panels hidden/u);
     assert.match(html, /Visible External Mapping/u);
     assert.match(html, /External Source Mappings/u);
-    assert.match(html, /title="Shows the long Kavita mapping and review tables/u);
+    assert.match(html, /class="info-icon halo-info"/u);
+    assert.match(html, /MAL updates send automatically for new read events/u);
+    assert.doesNotMatch(html, /name="kavitaBaseUrl"/u);
+    assert.doesNotMatch(html, /name="kavitaApiKey"/u);
+    assert.doesNotMatch(html, /Kavita Mirror/u);
     assert.doesNotMatch(html, /Hidden Kavita Mapping/u);
     assert.doesNotMatch(html, /Hidden Kavita Review/u);
   } finally {
@@ -792,6 +800,9 @@ test("bridge home shows Kavita sync panels only after the display toggle is enab
     const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
 
     assert.doesNotMatch(html, /Kavita sync panels hidden/u);
+    assert.match(html, /name="kavitaBaseUrl"/u);
+    assert.match(html, /name="kavitaApiKey"/u);
+    assert.match(html, /Kavita Mirror/u);
     assert.match(html, /Kavita Series Mappings/u);
     assert.match(html, /Visible Kavita Mapping/u);
     assert.match(html, /Visible Kavita Review/u);
@@ -885,6 +896,72 @@ test("bridge server processes external Paperback read events into MAL outbox wor
       num_chapters_read: 5,
       status: "reading",
     });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("bridge server auto-processes MAL outbox after read events when live writes are enabled", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const processed: string[] = [];
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: false,
+    runSync: async () => ({
+      seriesSeen: 0,
+      autoMatched: 0,
+      reviewQueued: 0,
+      updatesQueued: 0,
+      outboxProcessed: 0,
+      outboxSucceeded: 0,
+      outboxFailed: 0,
+    }),
+    processOutbox: async () => {
+      processed.push("outbox");
+      return {
+        outboxProcessed: 1,
+        outboxPreviewed: 0,
+        outboxSucceeded: 1,
+        outboxFailed: 0,
+      };
+    },
+    processReadEvent: async () => ({ status: "queued", malId: 3333, outboxId: "outbox:test" }),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const response = await fetch(`http://127.0.0.1:${port}/api/progress-events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schemaVersion: 2,
+        eventSource: "paperback-progress-bridge",
+        actionId: "mangadex-read-live",
+        occurredAt: "2026-06-28T00:00:00.000Z",
+        receivedAt: "2026-06-28T00:00:01.000Z",
+        readingSourceId: "MangaDex",
+        readingSourceName: "MangaDex",
+        readingSourceKind: "external",
+        sourceMangaId: "mangadex-title-1",
+        sourceChapterId: "chapter-5",
+        sourceChapterNumber: 5,
+        sourceTitle: "External Story",
+        chapterKind: "manga",
+      }),
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 202);
+    assert.equal(body.processing.status, "queued");
+    assert.equal(body.outboxProcessing.outboxSucceeded, 1);
+    assert.deepEqual(processed, ["outbox"]);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     store.close();

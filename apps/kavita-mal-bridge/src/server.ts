@@ -140,7 +140,14 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           }),
         });
         const processing = await processReadEventSafely(options, event, policy);
-        await respondJson(response, { ok: true, event, processing }, 202);
+        const settings = await options.store.listSettings();
+        const outboxProcessing = await processOutboxAfterReadEventSafely(
+          options,
+          event,
+          processing,
+          settingBoolean(settings.dryRun, options.dryRun),
+        );
+        await respondJson(response, { ok: true, event, processing, outboxProcessing }, 202);
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/source-policies") {
@@ -627,6 +634,34 @@ async function processReadEventSafely(
   }
 }
 
+async function processOutboxAfterReadEventSafely(
+  options: KavitaMalBridgeServerOptions,
+  event: BridgeReadEventRecord,
+  processing: ExternalReadEventProcessResult | undefined,
+  dryRun: boolean,
+): Promise<BridgeOutboxProcessResult | { error: string } | undefined> {
+  if (dryRun || processing?.status !== "queued" || !options.processOutbox) return undefined;
+  try {
+    return await options.processOutbox();
+  } catch (error) {
+    const safeError = safeErrorBody(error).error;
+    await options.store.audit({
+      type: "outbox",
+      kavitaSeriesId: event.kavitaSeriesId,
+      message: "Read event was queued but automatic MAL outbox processing failed.",
+      dataJson: JSON.stringify({
+        actionId: event.actionId,
+        readingSourceId: event.readingSourceId,
+        readingSourceKind: event.readingSourceKind,
+        sourceMangaId: event.sourceMangaId,
+        sourceChapterId: event.sourceChapterId,
+        error: safeError,
+      }),
+    });
+    return { error: safeError };
+  }
+}
+
 function observedProgressResponseItem(item: BridgeObservedSeries): Record<string, unknown> {
   return {
     kavitaSeriesId: item.kavitaSeriesId,
@@ -872,33 +907,171 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mutsuki Kavita MAL Bridge</title>
   <style>
-    body { background: #111827; color: #f9fafb; font-family: system-ui, sans-serif; margin: 2rem; }
-    h1, h2 { margin-bottom: 0.35rem; }
-    table { border-collapse: collapse; width: 100%; margin: 1rem 0 2rem; }
-    th, td { border-bottom: 1px solid #374151; padding: 0.6rem; text-align: left; vertical-align: top; }
-    th { color: #bfdbfe; font-size: 0.85rem; text-transform: uppercase; }
-    input, select, button { font: inherit; margin: 0.25rem 0; padding: 0.45rem; }
-    input, select { background: #1f2937; border: 1px solid #4b5563; color: #f9fafb; width: min(38rem, 100%); }
-    button, .button { background: #2563eb; border: 0; color: #fff; cursor: pointer; display: inline-block; padding: 0.55rem 0.8rem; text-decoration: none; }
+    :root {
+      color-scheme: dark;
+      --bg: #120d14;
+      --surface: #1c1620;
+      --surface-2: #251c28;
+      --line: #463845;
+      --text: #fff7fb;
+      --muted: #d8cbd6;
+      --rose: #c34d78;
+      --rose-2: #8d2f4d;
+      --lavender: #eee5f1;
+      --gold: #d8b66b;
+      --blue: #6ba8d8;
+      --good: #79d6a4;
+      --bad: #ff7d98;
+    }
+    * { box-sizing: border-box; }
+    body {
+      background: linear-gradient(180deg, #171019 0%, var(--bg) 42rem);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+    }
+    .app-shell { margin: 0 auto; max-width: 118rem; padding: 1.35rem clamp(1rem, 2vw, 2rem) 3rem; }
+    .topbar {
+      align-items: end;
+      border-bottom: 1px solid rgba(238, 229, 241, 0.16);
+      display: flex;
+      gap: 1rem;
+      justify-content: space-between;
+      padding-bottom: 1rem;
+    }
+    h1, h2 { letter-spacing: 0; line-height: 1.1; margin: 0 0 0.35rem; }
+    h1 { font-size: clamp(1.65rem, 2vw, 2.4rem); }
+    h2 { font-size: 1.2rem; }
+    p { line-height: 1.5; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid rgba(238, 229, 241, 0.13); padding: 0.72rem 0.75rem; text-align: left; vertical-align: top; }
+    th { color: #f1c6d6; font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; }
+    input, select, button { border-radius: 0.45rem; font: inherit; margin: 0.25rem 0; padding: 0.52rem 0.6rem; }
+    input, select { background: #17131b; border: 1px solid var(--line); color: var(--text); width: min(38rem, 100%); }
+    button, .button {
+      background: var(--rose);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      color: #fff;
+      cursor: pointer;
+      display: inline-flex;
+      font-weight: 700;
+      gap: 0.35rem;
+      justify-content: center;
+      padding: 0.58rem 0.85rem;
+      text-decoration: none;
+    }
+    button:hover, .button:hover, .tab-button:hover { filter: brightness(1.08); }
     label { display: block; margin: 0.45rem 0; }
-    .row { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
-    .panel { border: 1px solid #374151; margin: 1rem 0 2rem; padding: 1rem; }
-    .section-head { align-items: center; display: flex; flex-wrap: wrap; gap: 0.45rem; }
-    .help { color: #cbd5e1; display: block; font-size: 0.88rem; margin-top: 0.2rem; }
-    .info-icon { align-items: center; border: 1px solid #64748b; border-radius: 999px; color: #bfdbfe; display: inline-flex; font-size: 0.75rem; font-weight: 700; height: 1.15rem; justify-content: center; width: 1.15rem; }
+    code { color: var(--gold); overflow-wrap: anywhere; }
+    .muted { color: var(--muted); }
+    .eyebrow { color: #f1b7cb; font-size: 0.78rem; font-weight: 800; letter-spacing: 0.08em; margin: 0 0 0.25rem; text-transform: uppercase; }
+    .status-stack { align-items: flex-end; display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: flex-end; }
+    .status-pill { background: rgba(238, 229, 241, 0.08); border: 1px solid rgba(238, 229, 241, 0.16); border-radius: 999px; color: var(--lavender); padding: 0.42rem 0.7rem; white-space: nowrap; }
+    .status-pill.live { border-color: rgba(121, 214, 164, 0.42); color: var(--good); }
+    .status-pill.preview { border-color: rgba(216, 182, 107, 0.5); color: var(--gold); }
+    .tab-nav {
+      align-items: center;
+      display: flex;
+      gap: 0.55rem;
+      margin: 1rem 0;
+      overflow-x: auto;
+      padding-bottom: 0.15rem;
+    }
+    .tab-button {
+      background: rgba(238, 229, 241, 0.08);
+      border: 1px solid rgba(238, 229, 241, 0.14);
+      color: var(--lavender);
+      min-height: 2.5rem;
+      white-space: nowrap;
+    }
+    .tab-button.is-active { background: var(--rose-2); border-color: rgba(255, 190, 214, 0.34); }
+    .tab-panel { display: none; }
+    .tab-panel.is-active { display: block; }
+    .row { display: grid; gap: 0.85rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+    .panel {
+      background: rgba(28, 22, 32, 0.88);
+      border: 1px solid rgba(238, 229, 241, 0.14);
+      border-radius: 0.55rem;
+      margin: 1rem 0 1.35rem;
+      padding: 1rem;
+    }
+    .section-head { align-items: center; display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 1.15rem 0 0.35rem; }
+    .help { color: var(--muted); display: block; font-size: 0.88rem; margin-top: 0.2rem; }
+    .toolbar { align-items: center; display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 0.75rem; }
+    .table-wrap { overflow-x: auto; }
+    .info-icon {
+      align-items: center;
+      border: 0;
+      border-radius: 999px;
+      color: transparent;
+      display: inline-grid;
+      flex: 0 0 auto;
+      height: 1.35rem;
+      justify-items: center;
+      line-height: 1;
+      place-items: center;
+      position: relative;
+      vertical-align: middle;
+      width: 1.35rem;
+    }
+    .halo-info::before {
+      border: 2px solid #d77b9b;
+      border-radius: 999px;
+      box-shadow: 0 0 0 3px rgba(215, 123, 155, 0.18);
+      content: "";
+      height: 0.84rem;
+      transform: rotate(-12deg);
+      width: 0.84rem;
+    }
+    .halo-info::after {
+      background: var(--gold);
+      border-radius: 999px;
+      content: "";
+      height: 0.22rem;
+      position: absolute;
+      width: 0.22rem;
+    }
+    .sr-only { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
     .metric-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
-    .metric { background: #172033; border: 1px solid #334155; padding: 0.75rem; }
-    .metric strong { display: block; font-size: 1.4rem; }
-    .metric span { color: #cbd5e1; display: block; font-size: 0.86rem; }
-    .quick-guide { background: #172033; border-color: #334155; }
-    .kavita-hidden { background: #172033; }
-    code { color: #fde68a; }
-    .muted { color: #cbd5e1; }
+    .metric { background: var(--surface-2); border: 1px solid rgba(238, 229, 241, 0.14); border-radius: 0.5rem; padding: 0.8rem; }
+    .metric strong { display: block; font-size: 1.45rem; }
+    .metric span { color: var(--muted); display: block; font-size: 0.86rem; }
+    .quick-guide { background: linear-gradient(135deg, rgba(141, 47, 77, 0.35), rgba(37, 28, 40, 0.95)); }
+    .kavita-hidden { background: rgba(37, 28, 40, 0.86); }
+    pre { white-space: pre-wrap; }
+    @media (max-width: 720px) {
+      .topbar { align-items: stretch; flex-direction: column; }
+      .status-stack { align-items: flex-start; justify-content: flex-start; }
+      th, td { padding: 0.65rem 0.55rem; }
+    }
   </style>
 </head>
 <body>
-  <h1>Mutsuki Kavita MAL Bridge</h1>
-  <p class="muted">MAL write mode: <strong>${effectiveDryRun ? "Preview only (dry run)" : "Send to MAL (live writes)"}</strong> - MAL: <strong>${tokens ? "authorized" : "not authorized"}</strong>${schedule ? ` - Poll: <strong>${schedule.intervalSeconds}s</strong>` : ""}</p>
+<main class="app-shell">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Paperback progress bridge</p>
+      <h1>Mutsuki Kavita MAL Bridge</h1>
+      <p class="muted">External Paperback reads are matched to MAL first. Kavita tools stay tucked away until you enable them.</p>
+    </div>
+    <div class="status-stack">
+      <span class="status-pill ${effectiveDryRun ? "preview" : "live"}">${effectiveDryRun ? "Preview only" : "Send to MAL"}</span>
+      <span class="status-pill">${tokens ? "MAL authorized" : "MAL not authorized"}</span>
+      ${schedule ? `<span class="status-pill">Poll ${schedule.intervalSeconds}s</span>` : ""}
+      <span class="status-pill">${outboxCounts.pending} outbox pending</span>
+    </div>
+  </header>
+  <nav class="tab-nav" aria-label="Bridge sections">
+    <button type="button" class="tab-button is-active" data-tab-target="overview">Overview</button>
+    <button type="button" class="tab-button" data-tab-target="sources">Sources & matching</button>
+    <button type="button" class="tab-button" data-tab-target="outbox">MAL outbox</button>
+    <button type="button" class="tab-button" data-tab-target="settings">Settings</button>
+    <button type="button" class="tab-button" data-tab-target="kavita">Kavita</button>
+    <button type="button" class="tab-button" data-tab-target="audit">Audit</button>
+  </nav>
+  <p class="muted" id="form-status"></p>
+  <pre class="muted" id="preview-output"></pre>
+  <section class="tab-panel is-active" data-tab-panel="overview">
   <section class="panel quick-guide">
     <div class="section-head">
       <h2>Quick guide</h2>
@@ -907,21 +1080,14 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <p class="muted">Start here: confirm read events arrive, check unresolved external matches, then review the MAL outbox. Change MAL write mode to Send to MAL only when the pending outbox looks correct.</p>
   </section>
   ${renderWeebCentralMetricsPanel(weebCentral)}
+  </section>
+  <section class="tab-panel" data-tab-panel="settings">
   <div class="section-head">
-    <h2>Setup</h2>
-    ${infoIcon("Connect MAL, choose whether pending outbox updates are previews or live writes, and decide whether advanced Kavita sync tables are shown.")}
+    <h2>Settings</h2>
+    ${infoIcon("Connect MAL, choose whether new pending outbox updates are previews or live writes, and tune title discovery. Kavita controls live on the Kavita tab.")}
   </div>
-  <form class="panel" id="settings-form" data-endpoint="/api/settings">
+  <form class="panel settings-form" data-endpoint="/api/settings">
     <div class="row">
-      <label><span class="field-title">Kavita URL ${infoIcon("Only required for Kavita polling or Kavita mirroring. External source reads can still be tested without it.")}</span>
-        <input name="kavitaBaseUrl" value="${escapeHtml(settings.kavitaBaseUrl ?? "")}" autocomplete="off" />
-      </label>
-      <label><span class="field-title">Kavita API key ${infoIcon("Stored locally in the bridge database. It is never shown back on this page after saving.")}</span>
-        <input name="kavitaApiKey" type="password" placeholder="${settings.kavitaApiKey ? "Saved; enter a new key to replace" : ""}" autocomplete="off" />
-      </label>
-      <label><span class="field-title">Poll interval seconds ${infoIcon("How often the bridge checks Kavita progress in the background. Minimum is 60 seconds.")}</span>
-        <input name="pollIntervalSeconds" type="number" min="60" step="60" value="${escapeHtml(settings.pollIntervalSeconds ?? "")}" />
-      </label>
       <label><span class="field-title">Max MAL searches per run ${infoIcon("Safety limit for fuzzy MAL searches. Deterministic IDs still link without using this search budget.")}</span>
         <input name="maxMalSearchesPerRun" type="number" min="1" max="500" step="1" value="${escapeHtml(settings.maxMalSearchesPerRun ?? "")}" />
       </label>
@@ -930,14 +1096,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
           <option value="true"${effectiveDryRun ? " selected" : ""}>Preview only (dry run)</option>
           <option value="false"${!effectiveDryRun ? " selected" : ""}>Send to MAL (live writes)</option>
         </select>
-        <span class="help">Saving this setting does not send old pending outbox items by itself. Use Process MAL outbox now, or wait for the scheduled poll.</span>
-      </label>
-      <label><span class="field-title">Show Kavita sync panels ${infoIcon("Shows the long Kavita mapping and review tables. Keep this off when you are mainly testing Paperback read events from source extensions.")}</span>
-        <select name="showKavitaSyncPanels">
-          <option value="false"${!showKavitaSyncPanels ? " selected" : ""}>hide unless needed</option>
-          <option value="true"${showKavitaSyncPanels ? " selected" : ""}>show advanced Kavita panels</option>
-        </select>
-        <span class="help">This only changes the page layout. It does not disable Kavita polling or read-event processing.</span>
+        <span class="help">MAL updates send automatically for new read events when this is set to Send to MAL. Existing pending items stay in the outbox until Process MAL outbox now or the scheduler handles them.</span>
       </label>
       <label><span class="field-title">MAL client ID ${infoIcon("The client ID from your MyAnimeList API application.")}</span>
         <input name="malClientId" value="${escapeHtml(settings.malClientId ?? "")}" autocomplete="off" />
@@ -973,13 +1132,10 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <button type="submit">Save settings</button>
     <a class="button" href="/api/mal/oauth/start">Connect MAL</a>
     <button type="button" id="disconnect-mal">Disconnect MAL</button>
-    <button type="button" id="process-outbox">Process MAL outbox now</button>
-    <button type="button" id="run-sync">Run Kavita sync now</button>
-    <button type="button" id="check-readiness">Check readiness</button>
-    <button type="button" id="preview-kavita">Preview Kavita progress</button>
-    <p class="muted" id="form-status"></p>
-    <pre class="muted" id="preview-output"></pre>
+    <button type="button" id="check-readiness">Check MAL readiness</button>
   </form>
+  </section>
+  <section class="tab-panel" data-tab-panel="sources">
   <div class="section-head">
     <h2>Recent Paperback Read Events</h2>
     ${infoIcon("These are the read-complete events received from Paperback tracker/provider queues. If a title was read and is missing here, the bridge did not receive it.")}
@@ -992,10 +1148,10 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <h2>Source Policies</h2>
     ${infoIcon("Controls what the bridge may do for each Paperback source. MAL can be enabled while Kavita mirroring stays disabled.")}
   </div>
-  <p>${sourcePolicies.length} Paperback reading source${sourcePolicies.length === 1 ? "" : "s"} observed.</p>
+  <p>${sourcePolicies.length} Paperback reading source${sourcePolicies.length === 1 ? "" : "s"} observed. This table controls MAL matching only.</p>
   <table>
-    <thead><tr><th>Source</th><th>MAL</th><th>Kavita Mirror</th><th>Save</th></tr></thead>
-    <tbody>${sourcePolicies.map(renderSourcePolicyRow).join("")}</tbody>
+    <thead><tr><th>Source</th><th>MAL tracking</th><th>Save</th></tr></thead>
+    <tbody>${sourcePolicies.map((policy) => renderSourcePolicyRow(policy, "mal")).join("")}</tbody>
   </table>
   <div class="section-head">
     <h2>External Source Mappings</h2>
@@ -1023,16 +1179,33 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <thead><tr><th>Source</th><th>Title</th><th>Reason</th><th>Created</th><th>Restore</th></tr></thead>
     <tbody>${externalIgnored.map(renderExternalIgnoredRow).join("")}</tbody>
   </table>
+  </section>
+  <section class="tab-panel" data-tab-panel="outbox">
   <div class="section-head">
     <h2>MAL Outbox</h2>
     ${infoIcon("Pending MAL updates are written only when this outbox is processed. In Preview only mode, processing records a preview and does not change MAL. In Send to MAL mode, processing writes to MAL.")}
   </div>
   <p>${outboxCounts.pending} pending, ${outboxCounts.succeeded} succeeded, ${outboxCounts.failed} failed. Current mode: <strong>${effectiveDryRun ? "preview only" : "send to MAL"}</strong>.</p>
+  <div class="toolbar">
+    <button type="button" id="process-outbox">Process MAL outbox now</button>
+    <span class="muted">Use this for retries or older pending items. New read events auto-process when Send to MAL is active.</span>
+  </div>
   <table>
     <thead><tr><th>Created</th><th>Status</th><th>Target</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Error</th><th>Action</th></tr></thead>
     <tbody>${outboxItems.map(renderOutboxRow).join("")}</tbody>
   </table>
-  ${showKavitaSyncPanels ? renderKavitaSyncPanels({ mappings, reviews, ignored }) : renderKavitaSyncHiddenNotice({ mappingCount: mappings.length, reviewCount: reviews.length, ignoredCount: ignored.length })}
+  </section>
+  <section class="tab-panel" data-tab-panel="kavita">
+  ${renderKavitaToolsTab({
+    settings,
+    showKavitaSyncPanels,
+    sourcePolicies,
+    mappings,
+    reviews,
+    ignored,
+  })}
+  </section>
+  <section class="tab-panel" data-tab-panel="audit">
   <div class="section-head">
     <h2>Recent Audit</h2>
     ${infoIcon("Short bridge history for troubleshooting matching, settings, and outbox actions.")}
@@ -1041,6 +1214,8 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <thead><tr><th>Time</th><th>Type</th><th>Series</th><th>Message</th></tr></thead>
     <tbody>${audit.map((entry) => `<tr><td>${escapeHtml(entry.createdAt)}</td><td>${escapeHtml(entry.type)}</td><td>${entry.kavitaSeriesId ?? ""}</td><td>${escapeHtml(entry.message)}</td></tr>`).join("")}</tbody>
   </table>
+  </section>
+</main>
   <script>
     const status = document.querySelector("#form-status");
     const previewOutput = document.querySelector("#preview-output");
@@ -1064,37 +1239,60 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
       if (data.locked) data.locked = data.locked === "true";
       return data;
     }
-    document.querySelector("#settings-form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const response = await fetch(event.currentTarget.dataset.endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formJson(event.currentTarget)),
+    function selectTab(target) {
+      for (const button of document.querySelectorAll("[data-tab-target]")) {
+        button.classList.toggle("is-active", button.dataset.tabTarget === target);
+      }
+      for (const panel of document.querySelectorAll("[data-tab-panel]")) {
+        panel.classList.toggle("is-active", panel.dataset.tabPanel === target);
+      }
+      try { window.localStorage.setItem("mutsuki-bridge-tab", target); } catch {}
+    }
+    for (const button of document.querySelectorAll("[data-tab-target]")) {
+      button.addEventListener("click", () => selectTab(button.dataset.tabTarget));
+    }
+    try {
+      const savedTab = window.localStorage.getItem("mutsuki-bridge-tab");
+      if (savedTab && document.querySelector('[data-tab-target="' + savedTab + '"]')) selectTab(savedTab);
+    } catch {}
+    for (const form of document.querySelectorAll(".settings-form")) {
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const response = await fetch(event.currentTarget.dataset.endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(formJson(event.currentTarget)),
+        });
+        status.textContent = response.ok ? "Saved." : "Save failed.";
       });
-      status.textContent = response.ok ? "Saved." : "Save failed.";
-    });
-    document.querySelector("#run-sync").addEventListener("click", async () => {
+    }
+    const runSyncButton = document.querySelector("#run-sync");
+    if (runSyncButton) runSyncButton.addEventListener("click", async () => {
       const response = await fetch("/api/sync/run", { method: "POST" });
       const result = response.ok ? await response.json() : undefined;
       status.textContent = result ? syncResultMessage(result) : await responseErrorMessage(response, "Kavita sync failed.");
     });
-    document.querySelector("#process-outbox").addEventListener("click", async () => {
+    const processOutboxButton = document.querySelector("#process-outbox");
+    if (processOutboxButton) processOutboxButton.addEventListener("click", async () => {
       const response = await fetch("/api/outbox/process", { method: "POST" });
       const result = response.ok ? await response.json() : undefined;
       status.textContent = result ? outboxResultMessage(result) : await responseErrorMessage(response, "MAL outbox processing failed.");
     });
-    document.querySelector("#disconnect-mal").addEventListener("click", async () => {
+    const disconnectMalButton = document.querySelector("#disconnect-mal");
+    if (disconnectMalButton) disconnectMalButton.addEventListener("click", async () => {
       const response = await fetch("/api/mal/oauth/disconnect", { method: "POST" });
       status.textContent = response.ok ? "MAL authorization disconnected." : await responseErrorMessage(response, "Disconnect failed.");
     });
-    document.querySelector("#check-readiness").addEventListener("click", async () => {
+    const checkReadinessButton = document.querySelector("#check-readiness");
+    if (checkReadinessButton) checkReadinessButton.addEventListener("click", async () => {
       const response = await fetch("/api/readiness");
       const result = response.ok ? await response.json() : undefined;
       status.textContent = result
         ? "Kavita: " + (result.kavita.ok ? "ok" : "not ready") + ", MAL: " + (result.mal.ok ? "ok" : "not ready")
         : "Readiness check failed.";
     });
-    document.querySelector("#preview-kavita").addEventListener("click", async () => {
+    const previewKavitaButton = document.querySelector("#preview-kavita");
+    if (previewKavitaButton) previewKavitaButton.addEventListener("click", async () => {
       const response = await fetch("/api/kavita/observed-progress?limit=25");
       const result = response.ok ? await response.json() : undefined;
       if (!result) {
@@ -1244,7 +1442,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
 
 function infoIcon(text: string): string {
   const label = escapeHtml(text);
-  return `<span class="info-icon" role="img" aria-label="${label}" title="${label}">i</span>`;
+  return `<span class="info-icon halo-info" role="img" aria-label="${label}" title="${label}"><span class="sr-only">Info</span></span>`;
 }
 
 function renderWeebCentralMetricsPanel(metrics: WeebCentralMetricsRecord): string {
@@ -1357,21 +1555,103 @@ function renderOutboxRow(
   return `<tr><td>${escapeHtml(item.createdAt)}</td><td>${escapeHtml(item.status)}</td><td>${target}</td><td>${item.malId}</td><td>${escapeHtml(JSON.stringify(item.update))}</td><td>${item.attempts}</td><td>${escapeHtml(item.lastError ?? "")}</td><td>${action}</td></tr>`;
 }
 
+function renderKavitaToolsTab({
+  settings,
+  showKavitaSyncPanels,
+  sourcePolicies,
+  mappings,
+  reviews,
+  ignored,
+}: {
+  settings: Record<string, string>;
+  showKavitaSyncPanels: boolean;
+  sourcePolicies: Awaited<ReturnType<SqliteBridgeStore["listSourcePolicies"]>>;
+  mappings: SeriesMappingRecord[];
+  reviews: Awaited<ReturnType<SqliteBridgeStore["listReviews"]>>;
+  ignored: Awaited<ReturnType<SqliteBridgeStore["listIgnoredSeries"]>>;
+}): string {
+  const toggle = `<form class="panel settings-form" data-endpoint="/api/settings">
+    <div class="section-head">
+      <h2>Enable Kavita tools</h2>
+      ${infoIcon("Turn this on only when you want Kavita polling, Kavita mappings, or mirroring controls. External source to MAL tracking works without it.")}
+    </div>
+    <label><span class="field-title">Kavita tools</span>
+      <select name="showKavitaSyncPanels">
+        <option value="false"${!showKavitaSyncPanels ? " selected" : ""}>off - hide Kavita-only controls</option>
+        <option value="true"${showKavitaSyncPanels ? " selected" : ""}>on - show Kavita controls</option>
+      </select>
+      <span class="help">Keeping this off declutters the bridge while you are testing external sources such as WeebCentral or MangaDex.</span>
+    </label>
+    <button type="submit">Save Kavita visibility</button>
+  </form>`;
+  if (!showKavitaSyncPanels) {
+    return `${toggle}${renderKavitaSyncHiddenNotice({
+      mappingCount: mappings.length,
+      reviewCount: reviews.length,
+      ignoredCount: ignored.length,
+    })}`;
+  }
+  return `${toggle}
+  <form class="panel settings-form" data-endpoint="/api/settings">
+    <div class="section-head">
+      <h2>Kavita connection</h2>
+      ${infoIcon("Only required for Kavita polling, Kavita-to-MAL sync, or mirroring external reads back into Kavita.")}
+    </div>
+    <div class="row">
+      <label><span class="field-title">Kavita URL ${infoIcon("Base URL for your Kavita server, for example http://192.168.50.138:5000 or your tunnel URL.")}</span>
+        <input name="kavitaBaseUrl" value="${escapeHtml(settings.kavitaBaseUrl ?? "")}" autocomplete="off" />
+      </label>
+      <label><span class="field-title">Kavita API key ${infoIcon("Stored locally in the bridge database. It is never shown back on this page after saving.")}</span>
+        <input name="kavitaApiKey" type="password" placeholder="${settings.kavitaApiKey ? "Saved; enter a new key to replace" : ""}" autocomplete="off" />
+      </label>
+      <label><span class="field-title">Poll interval seconds ${infoIcon("How often the bridge checks Kavita progress in the background. Minimum is 60 seconds.")}</span>
+        <input name="pollIntervalSeconds" type="number" min="60" step="60" value="${escapeHtml(settings.pollIntervalSeconds ?? "")}" />
+      </label>
+    </div>
+    <div class="toolbar">
+      <button type="submit">Save Kavita settings</button>
+      <button type="button" id="run-sync">Run Kavita sync now</button>
+      <button type="button" id="preview-kavita">Preview Kavita progress</button>
+    </div>
+    <p class="muted">Kavita sync is separate from the MAL outbox. Use this only when you are ready to test Kavita as a source of progress.</p>
+  </form>
+  <section class="panel">
+    <div class="section-head">
+      <h2>Kavita Mirror</h2>
+      ${infoIcon("Optional: mirror selected external source reads into Kavita. Leave disabled unless you intentionally want the bridge to write read status back to Kavita.")}
+    </div>
+    <p class="muted">These controls do not affect direct MAL tracking. They are hidden whenever Kavita tools are off.</p>
+    <table>
+      <thead><tr><th>Source</th><th>Kavita Mirror</th><th>Save</th></tr></thead>
+      <tbody>${sourcePolicies.map((policy) => renderSourcePolicyRow(policy, "kavita")).join("")}</tbody>
+    </table>
+  </section>
+  ${renderKavitaSyncPanels({ mappings, reviews, ignored })}`;
+}
+
 function renderSourcePolicyRow(
   policy: Awaited<ReturnType<SqliteBridgeStore["listSourcePolicies"]>>[number],
+  mode: "mal" | "kavita" = "mal",
 ): string {
-  return `<tr><td>${escapeHtml(policy.readingSourceName)}<br /><code>${escapeHtml(policy.readingSourceId)}</code></td><td>
+  if (mode === "kavita") {
+    return `<tr><td>${escapeHtml(policy.readingSourceName)}<br /><code>${escapeHtml(policy.readingSourceId)}</code></td><td>
     <form class="source-policy-form" data-endpoint="/api/source-policies/${encodeURIComponent(policy.readingSourceId)}">
       <input name="readingSourceName" value="${escapeHtml(policy.readingSourceName)}" />
-      <select name="malEnabled">
-        <option value="true"${policy.malEnabled ? " selected" : ""}>enabled</option>
-        <option value="false"${!policy.malEnabled ? " selected" : ""}>disabled</option>
-      </select>
-    </td><td>
+      <input name="malEnabled" type="hidden" value="${policy.malEnabled ? "true" : "false"}" />
       <select name="kavitaMirrorMode">
         <option value="disabled"${policy.kavitaMirrorMode === "disabled" ? " selected" : ""}>disabled</option>
         <option value="kavita-source-only"${policy.kavitaMirrorMode === "kavita-source-only" ? " selected" : ""}>kavita-source-only</option>
         <option value="approved-external-mappings"${policy.kavitaMirrorMode === "approved-external-mappings" ? " selected" : ""}>approved-external-mappings</option>
+      </select>
+    </td><td><button type="submit">Save</button></form></td></tr>`;
+  }
+  return `<tr><td>${escapeHtml(policy.readingSourceName)}<br /><code>${escapeHtml(policy.readingSourceId)}</code></td><td>
+    <form class="source-policy-form" data-endpoint="/api/source-policies/${encodeURIComponent(policy.readingSourceId)}">
+      <input name="readingSourceName" value="${escapeHtml(policy.readingSourceName)}" />
+      <input name="kavitaMirrorMode" type="hidden" value="${escapeHtml(policy.kavitaMirrorMode)}" />
+      <select name="malEnabled">
+        <option value="true"${policy.malEnabled ? " selected" : ""}>enabled</option>
+        <option value="false"${!policy.malEnabled ? " selected" : ""}>disabled</option>
       </select>
     </td><td><button type="submit">Save</button></form></td></tr>`;
 }
