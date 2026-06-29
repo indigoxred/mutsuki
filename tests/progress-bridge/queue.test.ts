@@ -9,8 +9,6 @@ import {
 } from "@paperback/types";
 
 import {
-  buildHistoryProbeUnavailableSubmission,
-  historyProbeEndpoint,
   MutsukiProgressBridgeExtension,
   type ProgressBridgeEvent,
   processProgressBridgeReadActionQueue,
@@ -219,31 +217,14 @@ test("progress bridge tracker exposes a queue surface and neutral progress marke
   assert.equal(typeof tracker.processChapterReadActionQueue, "function");
 });
 
-test("progress bridge settings expose a diagnostic Paperback history access probe", async () => {
+test("progress bridge settings do not expose retroactive history probing", async () => {
   installApplicationStub();
   const form = await new MutsukiProgressBridgeExtension().getSettingsForm();
   const sections = form.getSections();
   const serialized = JSON.stringify(sections);
 
-  assert.match(serialized, /Probe Paperback history access/u);
-});
-
-test("history probe unavailable submission lists inspected Paperback APIs without sample events", () => {
-  const submission = buildHistoryProbeUnavailableSubmission("2026-06-29T00:00:00.000Z");
-
-  assert.equal(submission.status, "no-extension-accessible-history-api-found");
-  assert.equal(submission.events.length, 0);
-  assert.ok(submission.inspectedApis.includes("Application"));
-  assert.ok(submission.inspectedApis.includes("MangaProgressProviding"));
-  assert.ok(submission.inspectedApis.includes("TrackedMangaChapterReadAction"));
-  assert.equal(submission.findings[0]?.code, "no-extension-accessible-history-api-found");
-});
-
-test("history probe endpoint uses the bridge URL without requiring URL global", () => {
-  assert.equal(
-    historyProbeEndpoint("http://192.168.50.138:6768/"),
-    "http://192.168.50.138:6768/api/history-probe/events",
-  );
+  assert.doesNotMatch(serialized, /Probe Paperback history access/u);
+  assert.doesNotMatch(serialized, /History backfill/u);
 });
 
 test("progress bridge tracker search returns a stable synthetic tracking target", async () => {

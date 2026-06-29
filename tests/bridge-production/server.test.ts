@@ -954,6 +954,37 @@ test("bridge home hides Kavita sync panels by default while keeping external tra
   }
 });
 
+test("bridge home and API do not expose retroactive history backfill", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
+  const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
+  store.migrate();
+  const server = createKavitaMalBridgeServer({
+    store,
+    dryRun: true,
+    runSync: async () => emptySyncResult(),
+  });
+
+  try {
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    assert.equal(typeof address, "object");
+    const port = address && typeof address === "object" ? address.port : 0;
+
+    const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+    const probeStatus = await fetch(`http://127.0.0.1:${port}/api/history-probe/status`);
+    const probeEvents = await fetch(`http://127.0.0.1:${port}/api/history-probe/events`);
+
+    assert.doesNotMatch(html, /History backfill/u);
+    assert.doesNotMatch(html, /History Backfill Feasibility/u);
+    assert.equal(probeStatus.status, 404);
+    assert.equal(probeEvents.status, 404);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    store.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("bridge home shows Kavita sync panels only after the display toggle is enabled", async () => {
   const directory = await mkdtemp(join(tmpdir(), "mutsuki-server-"));
   const store = new SqliteBridgeStore(join(directory, "bridge.sqlite"));
@@ -2064,6 +2095,18 @@ async function fetchJson(url: string): Promise<any> {
   const response = await fetch(url);
   assert.equal(response.status, 200);
   return response.json();
+}
+
+function emptySyncResult() {
+  return {
+    seriesSeen: 0,
+    autoMatched: 0,
+    reviewQueued: 0,
+    updatesQueued: 0,
+    outboxProcessed: 0,
+    outboxSucceeded: 0,
+    outboxFailed: 0,
+  };
 }
 
 async function postJson(url: string, body: unknown): Promise<any> {
