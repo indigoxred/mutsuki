@@ -79,6 +79,13 @@ The settings action **Send bridge test event** posts one synthetic diagnostic ev
 production bridge. It only proves iOS/Paperback networking to the bridge; it is not a read-sync
 solution.
 
+The settings action **Probe Paperback history access** posts a sanitized diagnostic report to
+`POST /api/history-probe/events`. The bridge displays the result in **History backfill**. This is a
+feasibility probe only: it does not enqueue MAL updates, and debug-log parsing remains weak
+diagnostic evidence unless Paperback exposes stable source, manga, chapter, and completion data.
+See `docs/history-backfill-feasibility.md` for the manual test matrix and the accidental-click
+filters used by the preview planner.
+
 The **Mutsuki Progress Bridge** tracker is the supported diagnostic path for actual queued read
 actions. It can receive `TrackedMangaChapterReadAction` items from Paperback for titles associated
 with that tracker and forward sanitized events to the production bridge. Event payloads now include

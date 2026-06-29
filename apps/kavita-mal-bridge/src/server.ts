@@ -21,6 +21,7 @@ import {
   processExternalReadEvent,
   type ExternalReadEventProcessResult,
 } from "./external-events.js";
+import { parseHistoryProbeSubmission } from "./history-probe.js";
 import { createAnilistResolver } from "./resolvers/anilist-resolver.js";
 import { createJikanResolver } from "./resolvers/jikan-resolver.js";
 import { createMangaDexResolver } from "./resolvers/mangadex-resolver.js";
@@ -110,6 +111,7 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           externalIgnored: externalIgnored.length,
           ignored: (await options.store.listIgnoredSeries()).length,
           readEvents: await options.store.readEventCount(),
+          historyProbe: await options.store.historyProbeStatus(),
           sourcePolicies: (await options.store.listSourcePolicies()).length,
           outbox,
           weebCentral,
@@ -148,6 +150,41 @@ export function createKavitaMalBridgeServer(options: KavitaMalBridgeServerOption
           settingBoolean(settings.dryRun, options.dryRun),
         );
         await respondJson(response, { ok: true, event, processing, outboxProcessing }, 202);
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/history-probe/status") {
+        await respondJson(response, await options.store.historyProbeStatus());
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/api/history-probe/events") {
+        const limit = queryLimit(url, 50, 250);
+        await respondJson(response, { events: await options.store.listHistoryProbeEvents(limit) });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/history-probe/events") {
+        const submission = parseHistoryProbeSubmission(
+          parseJsonRecord(await readRequestBody(request)),
+        );
+        await options.store.appendHistoryProbeSubmission(submission);
+        await options.store.audit({
+          type: "system",
+          message: `History probe stored: ${submission.status}.`,
+          dataJson: JSON.stringify({
+            probeRunId: submission.probeRunId,
+            status: submission.status,
+            eventCount: submission.events.length,
+          }),
+        });
+        await respondJson(
+          response,
+          { ok: true, status: await options.store.historyProbeStatus() },
+          202,
+        );
+        return;
+      }
+      if (request.method === "DELETE" && url.pathname === "/api/history-probe/events") {
+        await options.store.clearHistoryProbeEvents();
+        await respondJson(response, { ok: true });
         return;
       }
       if (request.method === "GET" && url.pathname === "/api/source-policies") {
@@ -886,6 +923,8 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     externalReviews,
     externalIgnored,
     weebCentral,
+    historyProbeStatus,
+    historyProbeEvents,
   ] = await Promise.all([
     options.store.listSeriesMappings(),
     options.store.listReviews(),
@@ -901,6 +940,8 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     options.store.listExternalReviews(),
     options.store.listExternalIgnoredSeries(),
     options.store.weebCentralMetrics(),
+    options.store.historyProbeStatus(),
+    options.store.listHistoryProbeEvents(12),
   ]);
   const ignored = await options.store.listIgnoredSeries();
   const effectiveDryRun = settingBoolean(settings.dryRun, options.dryRun);
@@ -1102,6 +1143,7 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <button type="button" class="tab-button" data-tab-target="sources">Sources & matching</button>
     <button type="button" class="tab-button" data-tab-target="outbox">MAL outbox</button>
     <button type="button" class="tab-button" data-tab-target="settings">Settings</button>
+    <button type="button" class="tab-button" data-tab-target="history">History backfill</button>
     <button type="button" class="tab-button" data-tab-target="kavita">Kavita</button>
     <button type="button" class="tab-button" data-tab-target="audit">Audit</button>
   </nav>
@@ -1245,6 +1287,9 @@ async function renderHome(options: KavitaMalBridgeServerOptions): Promise<string
     <thead><tr><th>Updated</th><th>Status</th><th>Target</th><th>MAL ID</th><th>Update</th><th>Attempts</th><th>Note</th><th></th></tr></thead>
     <tbody>${outboxHistoryItems.map(renderOutboxRow).join("")}</tbody>
   </table>
+  </section>
+  <section class="tab-panel" data-tab-panel="history">
+  ${renderHistoryBackfillTab({ historyProbeStatus, historyProbeEvents })}
   </section>
   <section class="tab-panel" data-tab-panel="kavita">
   ${renderKavitaToolsTab({
@@ -1749,6 +1794,79 @@ function renderOutboxRow(
       ? `${item.targetTitle ? `${escapeHtml(item.targetTitle)}<br />` : ""}<code>${escapeHtml(item.targetKey)}</code>`
       : `Kavita series ${item.kavitaSeriesId}`;
   return `<tr><td>${escapeHtml(item.createdAt)}</td><td>${escapeHtml(item.status)}</td><td>${target}</td><td>${item.malId}</td><td>${escapeHtml(JSON.stringify(item.update))}</td><td>${item.attempts}</td><td>${escapeHtml(item.lastError ?? "")}</td><td>${action}</td></tr>`;
+}
+
+function renderHistoryBackfillTab({
+  historyProbeStatus,
+  historyProbeEvents,
+}: {
+  historyProbeStatus: Awaited<ReturnType<SqliteBridgeStore["historyProbeStatus"]>>;
+  historyProbeEvents: Awaited<ReturnType<SqliteBridgeStore["listHistoryProbeEvents"]>>;
+}): string {
+  const apiStatus =
+    historyProbeStatus.lastRun?.status === "sample-collected"
+      ? "Probe sample received"
+      : historyProbeStatus.lastRun?.status === "no-extension-accessible-history-api-found"
+        ? "No extension-accessible history API found"
+        : "Not tested yet";
+  return `<div class="section-head">
+    <h2>History Backfill Feasibility</h2>
+    ${infoIcon("Diagnostic-only area for testing whether Paperback history can be accessed or safely imported. It never sends MAL updates.")}
+  </div>
+  <section class="panel">
+    <p><strong>Extension history API:</strong> ${escapeHtml(apiStatus)}</p>
+    <p class="muted">This section is for proof-of-access only. It does not enqueue MAL outbox rows and does not infer dropped status.</p>
+    <div class="metric-grid">
+      ${renderMetric("Probe records", historyProbeStatus.recordCount, "History probe records stored separately from live read events.")}
+      ${renderMetric("Reliable", historyProbeStatus.reliability.reliable, "Records with stable source, manga, chapter, completion, and ordering fields.")}
+      ${renderMetric("Weak", historyProbeStatus.reliability.weak, "Records missing important identity fields; not safe for automatic MAL backfill.")}
+      ${renderMetric("Unusable", historyProbeStatus.reliability.unusable, "Records that cannot be safely normalized.")}
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Last Probe Run</h2>
+    ${
+      historyProbeStatus.lastRun
+        ? `<p><strong>${escapeHtml(historyProbeStatus.lastRun.status)}</strong> at ${escapeHtml(historyProbeStatus.lastRun.createdAt)}</p>
+           <p class="muted">Inspected APIs: ${historyProbeStatus.lastRun.inspectedApis.map(escapeHtml).join(", ")}</p>`
+        : `<p class="muted">No history probe has been submitted yet. Use the Progress Bridge settings action in Paperback.</p>`
+    }
+    <h3>Findings</h3>
+    <ul>${historyProbeStatus.findings.map((finding) => `<li><code>${escapeHtml(finding.code)}</code> ${escapeHtml(finding.message)}</li>`).join("") || "<li>No findings yet.</li>"}</ul>
+  </section>
+  <section class="panel">
+    <h2>Tracker Replay Test Checklist</h2>
+    <ol>
+      <li><strong>historical-before-association:</strong> read chapters before linking Progress Bridge, then associate, restart, and watch probe/live event endpoints.</li>
+      <li><strong>future-read control:</strong> read the next chapter after association and confirm it arrives as a normal live read event.</li>
+      <li><strong>app restart duplicate check:</strong> restart again and confirm old chapters do not duplicate.</li>
+      <li><strong>unassociate/reassociate:</strong> if Paperback allows it, check whether historical reads replay.</li>
+    </ol>
+  </section>
+  <section class="panel">
+    <h2>Sample Probe Records</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Reliability</th><th>Source</th><th>Title</th><th>Chapter</th><th>Progress</th><th>Read at</th></tr></thead>
+        <tbody>${historyProbeEvents.map(renderHistoryProbeEventRow).join("") || `<tr><td colspan="6" class="muted">No probe records yet.</td></tr>`}</tbody>
+      </table>
+    </div>
+  </section>`;
+}
+
+function renderHistoryProbeEventRow(
+  event: Awaited<ReturnType<SqliteBridgeStore["listHistoryProbeEvents"]>>[number],
+): string {
+  return `<tr>
+    <td>${escapeHtml(event.reliability)}</td>
+    <td>${escapeHtml(event.readingSourceId ?? event.source ?? "")}</td>
+    <td>${escapeHtml(event.sourceMangaTitle ?? "")}<br /><code>${escapeHtml(event.sourceMangaId ?? "")}</code></td>
+    <td>${escapeHtml(event.sourceChapterTitle ?? "")}<br /><code>${escapeHtml(event.sourceChapterId ?? "")}</code></td>
+    <td>${event.pagesRead ?? ""}/${event.totalPages ?? ""} ${
+      event.completionPercent === undefined ? "" : `${Math.round(event.completionPercent)}%`
+    }</td>
+    <td>${escapeHtml(event.readAt ?? event.updatedAt ?? "")}</td>
+  </tr>`;
 }
 
 function renderKavitaToolsTab({

@@ -23,16 +23,20 @@ import {
 } from "@paperback/types";
 
 import {
+  historyProbeEndpoint,
   sendProgressBridgeEvent,
+  sendProgressBridgeHistoryProbe,
   type ProgressBridgeTransport,
 } from "../shared/progress-bridge.js";
+
+export { historyProbeEndpoint };
 
 type ProgressBridgeImplementation = Extension &
   SearchResultsProviding &
   SettingsFormProviding &
   MangaProgressProviding;
 
-const PROGRESS_BRIDGE_VERSION = "0.1.8";
+const PROGRESS_BRIDGE_VERSION = "0.1.9";
 const PROGRESS_BRIDGE_ICON_URL =
   "https://indigoxred.github.io/mutsuki/ProgressBridge/static/icon.png";
 
@@ -264,6 +268,13 @@ class ProgressBridgeSettingsForm extends Form {
             "handleSendBridgeTestEvent",
           ),
         }),
+        ButtonRow("probe-paperback-history-access", {
+          title: "Probe Paperback history access",
+          onSelect: Application.Selector(
+            this as ProgressBridgeSettingsForm,
+            "handleProbePaperbackHistoryAccess",
+          ),
+        }),
         this.status
           ? LabelRow("status", { title: "Bridge test", subtitle: this.status })
           : undefined,
@@ -298,10 +309,66 @@ class ProgressBridgeSettingsForm extends Form {
     this.reloadForm();
   }
 
+  async handleProbePaperbackHistoryAccess(): Promise<void> {
+    try {
+      await sendProgressBridgeHistoryProbe({
+        bridgeUrl: this.settings.progressBridgeUrl,
+        token: this.settings.progressBridgeToken || undefined,
+        submission: buildHistoryProbeUnavailableSubmission(new Date().toISOString()),
+        transport: paperbackProgressBridgeTransport,
+      });
+      this.status = "History probe sent. Check the bridge History Backfill tab.";
+    } catch (error) {
+      this.status = error instanceof Error ? error.message : "History probe failed.";
+    }
+    this.reloadForm();
+  }
+
   private update(settings: Partial<ProgressBridgeSettings>): void {
     this.settings = { ...this.settings, ...settings };
     setProgressBridgeSettings(this.settings);
   }
+}
+
+export interface HistoryProbeUnavailableSubmission {
+  schemaVersion: 1;
+  probeRunId: string;
+  source: "progress-bridge-settings-action";
+  status: "no-extension-accessible-history-api-found";
+  createdAt: string;
+  inspectedApis: string[];
+  findings: Array<{ code: string; message: string }>;
+  events: [];
+}
+
+export function buildHistoryProbeUnavailableSubmission(
+  now: string,
+): HistoryProbeUnavailableSubmission {
+  return {
+    schemaVersion: 1,
+    probeRunId: `paperback-history-probe:${now}`,
+    source: "progress-bridge-settings-action",
+    status: "no-extension-accessible-history-api-found",
+    createdAt: now,
+    inspectedApis: [
+      "Application",
+      "Application.getState",
+      "Application.getSecureState",
+      "MangaProgressProviding",
+      "TrackedMangaChapterReadAction",
+      "SourceManga.chapterCount",
+      "SourceManga.newChapterCount",
+      "SourceManga.unreadChapterCount",
+    ],
+    findings: [
+      {
+        code: "no-extension-accessible-history-api-found",
+        message:
+          "@paperback/types 1.0.0-alpha.92 exposes no public extension API for reading LocalHistoryService, historical chapter progress, saved-library read state, or completed chapter history. Tracker queues only deliver queued actions for associated tracker relationships.",
+      },
+    ],
+    events: [],
+  };
 }
 
 class ProgressBridgeTrackingForm extends Form {

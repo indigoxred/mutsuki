@@ -34,10 +34,39 @@ export async function sendProgressBridgeEvent(input: {
   }
 }
 
+export async function sendProgressBridgeHistoryProbe(input: {
+  bridgeUrl: string;
+  token?: string;
+  submission: unknown;
+  transport: ProgressBridgeTransport;
+}): Promise<void> {
+  const url = historyProbeEndpoint(input.bridgeUrl);
+  const response = await input.transport({
+    url,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(input.token ? { Authorization: `Bearer ${input.token}` } : {}),
+    },
+    body: JSON.stringify(input.submission),
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Progress bridge rejected history probe with status ${response.status}.`);
+  }
+}
+
 export function progressEventsEndpoint(bridgeUrl: string): string {
+  return bridgeEndpoint(bridgeUrl, "/api/progress-events");
+}
+
+export function historyProbeEndpoint(bridgeUrl: string): string {
+  return bridgeEndpoint(bridgeUrl, "/api/history-probe/events");
+}
+
+function bridgeEndpoint(bridgeUrl: string, endpointPath: string): string {
   const url = parseBridgeUrl(bridgeUrl);
   const path = url.path.replace(/\/+$/u, "");
-  return `${url.protocol}://${url.host}${path}/api/progress-events`;
+  return `${url.protocol}://${url.host}${path}${endpointPath}`;
 }
 
 interface ParsedBridgeUrl {

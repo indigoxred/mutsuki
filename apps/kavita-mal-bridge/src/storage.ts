@@ -3,6 +3,15 @@ import { DatabaseSync } from "node:sqlite";
 import type { BridgeOutboxItem, OutboxStore } from "./outbox.js";
 import type { BridgeTrackingMode } from "./policy.js";
 import {
+  sanitizedHistoryProbeRawJson,
+  type HistoryProbeEvent,
+  type HistoryProbeRunRecord,
+  type HistoryProbeStatusSummary,
+  type HistoryProbeSubmission,
+  type StoredHistoryProbeEvent,
+  type StoredHistoryProbeFinding,
+} from "./history-probe.js";
+import {
   DEFAULT_SOURCE_POLICY,
   type BridgeReadEventRecord,
   type SourcePolicyRecord,
@@ -319,6 +328,44 @@ export class SqliteBridgeStore implements OutboxStore {
         expires_at TEXT NOT NULL,
         token_type TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS history_probe_runs (
+        probe_run_id TEXT PRIMARY KEY,
+        schema_version INTEGER NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        received_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        inspected_apis_json TEXT NOT NULL,
+        raw_submission_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS history_probe_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        probe_run_id TEXT NOT NULL,
+        source TEXT,
+        reading_source_id TEXT,
+        source_manga_id TEXT,
+        source_manga_title TEXT,
+        source_chapter_id TEXT,
+        source_chapter_title TEXT,
+        source_chapter_number REAL,
+        source_chapter_volume REAL,
+        completed INTEGER,
+        pages_read REAL,
+        total_pages REAL,
+        completion_percent REAL,
+        read_at TEXT,
+        updated_at TEXT,
+        reliability TEXT NOT NULL,
+        raw_record_json TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE IF NOT EXISTS history_probe_findings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        probe_run_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
     `);
     this.addColumnIfMissing("series_mappings", "title", "TEXT");
@@ -1040,6 +1087,121 @@ export class SqliteBridgeStore implements OutboxStore {
     this.db.prepare("DELETE FROM mal_oauth_tokens WHERE id = 1").run();
   }
 
+  async appendHistoryProbeSubmission(submission: HistoryProbeSubmission): Promise<void> {
+    const rawJson = sanitizedHistoryProbeRawJson(submission);
+    this.db
+      .prepare(
+        `
+          INSERT INTO history_probe_runs (
+            probe_run_id, schema_version, source, status, created_at, received_at,
+            inspected_apis_json, raw_submission_json
+          ) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
+          ON CONFLICT(probe_run_id) DO UPDATE SET
+            schema_version = excluded.schema_version,
+            source = excluded.source,
+            status = excluded.status,
+            created_at = excluded.created_at,
+            received_at = CURRENT_TIMESTAMP,
+            inspected_apis_json = excluded.inspected_apis_json,
+            raw_submission_json = excluded.raw_submission_json
+        `,
+      )
+      .run(
+        submission.probeRunId,
+        submission.schemaVersion,
+        submission.source,
+        submission.status,
+        submission.createdAt,
+        JSON.stringify(submission.inspectedApis),
+        rawJson,
+      );
+    this.db
+      .prepare("DELETE FROM history_probe_events WHERE probe_run_id = ?")
+      .run(submission.probeRunId);
+    this.db
+      .prepare("DELETE FROM history_probe_findings WHERE probe_run_id = ?")
+      .run(submission.probeRunId);
+    const insertEvent = this.db.prepare(`
+      INSERT INTO history_probe_events (
+        probe_run_id, source, reading_source_id, source_manga_id, source_manga_title,
+        source_chapter_id, source_chapter_title, source_chapter_number, source_chapter_volume,
+        completed, pages_read, total_pages, completion_percent, read_at, updated_at,
+        reliability, raw_record_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    for (const event of submission.events) {
+      insertEvent.run(
+        submission.probeRunId,
+        event.source ?? null,
+        event.readingSourceId ?? null,
+        event.sourceMangaId ?? null,
+        event.sourceMangaTitle ?? null,
+        event.sourceChapterId ?? null,
+        event.sourceChapterTitle ?? null,
+        event.sourceChapterNumber ?? null,
+        event.sourceChapterVolume ?? null,
+        typeof event.completed === "boolean" ? (event.completed ? 1 : 0) : null,
+        event.pagesRead ?? null,
+        event.totalPages ?? null,
+        event.completionPercent ?? null,
+        event.readAt ?? null,
+        event.updatedAt ?? null,
+        event.reliability,
+        event.rawRecordJson ?? null,
+      );
+    }
+    const insertFinding = this.db.prepare(`
+      INSERT INTO history_probe_findings (probe_run_id, code, message)
+      VALUES (?, ?, ?)
+    `);
+    for (const finding of submission.findings) {
+      insertFinding.run(submission.probeRunId, finding.code, finding.message);
+    }
+  }
+
+  async listHistoryProbeEvents(limit = 50): Promise<StoredHistoryProbeEvent[]> {
+    return (
+      this.db
+        .prepare("SELECT * FROM history_probe_events ORDER BY created_at DESC, id DESC LIMIT ?")
+        .all(limit) as unknown as HistoryProbeEventRow[]
+    ).map(historyProbeEventFromRow);
+  }
+
+  async clearHistoryProbeEvents(): Promise<void> {
+    this.db.prepare("DELETE FROM history_probe_events").run();
+    this.db.prepare("DELETE FROM history_probe_findings").run();
+    this.db.prepare("DELETE FROM history_probe_runs").run();
+  }
+
+  async historyProbeStatus(): Promise<HistoryProbeStatusSummary> {
+    const runRow = this.db
+      .prepare("SELECT * FROM history_probe_runs ORDER BY received_at DESC LIMIT 1")
+      .get() as HistoryProbeRunRow | undefined;
+    const countRow = this.db.prepare("SELECT COUNT(*) AS count FROM history_probe_events").get() as
+      | { count: number }
+      | undefined;
+    const reliabilityRows = this.db
+      .prepare(
+        "SELECT reliability, COUNT(*) AS count FROM history_probe_events GROUP BY reliability",
+      )
+      .all() as unknown as { reliability: HistoryProbeEvent["reliability"]; count: number }[];
+    const findings = (
+      this.db
+        .prepare("SELECT * FROM history_probe_findings ORDER BY created_at DESC, id DESC LIMIT 25")
+        .all() as unknown as HistoryProbeFindingRow[]
+    ).map(historyProbeFindingFromRow);
+    return {
+      lastRun: runRow ? historyProbeRunFromRow(runRow) : undefined,
+      recordCount: countRow?.count ?? 0,
+      reliability: {
+        reliable: countReliability(reliabilityRows, "reliable"),
+        weak: countReliability(reliabilityRows, "weak"),
+        unusable: countReliability(reliabilityRows, "unusable"),
+      },
+      findings,
+    };
+  }
+
   async findByDedupKey(dedupKey: string): Promise<BridgeOutboxItem | undefined> {
     const row = this.db.prepare("SELECT * FROM mal_outbox WHERE dedup_key = ?").get(dedupKey) as
       | OutboxRow
@@ -1382,6 +1544,47 @@ interface OAuthTokenRow {
   token_type: string;
 }
 
+interface HistoryProbeRunRow {
+  probe_run_id: string;
+  schema_version: 1;
+  source: string;
+  status: HistoryProbeRunRecord["status"];
+  created_at: string;
+  received_at: string;
+  inspected_apis_json: string;
+  raw_submission_json: string;
+}
+
+interface HistoryProbeEventRow {
+  id: number;
+  probe_run_id: string;
+  source: string | null;
+  reading_source_id: string | null;
+  source_manga_id: string | null;
+  source_manga_title: string | null;
+  source_chapter_id: string | null;
+  source_chapter_title: string | null;
+  source_chapter_number: number | null;
+  source_chapter_volume: number | null;
+  completed: number | null;
+  pages_read: number | null;
+  total_pages: number | null;
+  completion_percent: number | null;
+  read_at: string | null;
+  updated_at: string | null;
+  reliability: HistoryProbeEvent["reliability"];
+  raw_record_json: string | null;
+  created_at: string;
+}
+
+interface HistoryProbeFindingRow {
+  id: number;
+  probe_run_id: string;
+  code: string;
+  message: string;
+  created_at: string;
+}
+
 function mappingFromRow(row: MappingRow): SeriesMappingRecord {
   return {
     kavitaSeriesId: row.kavita_series_id,
@@ -1553,6 +1756,60 @@ function outboxFromRow(row: OutboxRow): BridgeOutboxItem {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function historyProbeRunFromRow(row: HistoryProbeRunRow): HistoryProbeRunRecord {
+  return {
+    probeRunId: row.probe_run_id,
+    schemaVersion: row.schema_version,
+    source: row.source,
+    status: row.status,
+    createdAt: row.created_at,
+    receivedAt: row.received_at,
+    inspectedApis: parseStringArray(row.inspected_apis_json) ?? [],
+    rawSubmissionJson: row.raw_submission_json,
+  };
+}
+
+function historyProbeEventFromRow(row: HistoryProbeEventRow): StoredHistoryProbeEvent {
+  return {
+    id: row.id,
+    probeRunId: row.probe_run_id,
+    source: row.source ?? undefined,
+    readingSourceId: row.reading_source_id ?? undefined,
+    sourceMangaId: row.source_manga_id ?? undefined,
+    sourceMangaTitle: row.source_manga_title ?? undefined,
+    sourceChapterId: row.source_chapter_id ?? undefined,
+    sourceChapterTitle: row.source_chapter_title ?? undefined,
+    sourceChapterNumber: row.source_chapter_number ?? undefined,
+    sourceChapterVolume: row.source_chapter_volume ?? undefined,
+    completed: row.completed === null ? undefined : row.completed === 1,
+    pagesRead: row.pages_read ?? undefined,
+    totalPages: row.total_pages ?? undefined,
+    completionPercent: row.completion_percent ?? undefined,
+    readAt: row.read_at ?? undefined,
+    updatedAt: row.updated_at ?? undefined,
+    reliability: row.reliability,
+    rawRecordJson: row.raw_record_json ?? undefined,
+    createdAt: row.created_at,
+  };
+}
+
+function historyProbeFindingFromRow(row: HistoryProbeFindingRow): StoredHistoryProbeFinding {
+  return {
+    id: row.id,
+    probeRunId: row.probe_run_id,
+    code: row.code,
+    message: row.message,
+    createdAt: row.created_at,
+  };
+}
+
+function countReliability(
+  rows: { reliability: HistoryProbeEvent["reliability"]; count: number }[],
+  reliability: HistoryProbeEvent["reliability"],
+): number {
+  return rows.find((row) => row.reliability === reliability)?.count ?? 0;
 }
 
 function parseExternalTargetKey(
