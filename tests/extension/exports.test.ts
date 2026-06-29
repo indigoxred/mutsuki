@@ -55,16 +55,20 @@ test("generated Kavita bundle keeps progress methods on the exported runtime obj
   assert.match(bundle, /Kavita=/u);
 });
 
-test("generated versioning advertises PROGRESS_PROVIDING as distinct capability 2", () => {
+test("generated versioning keeps Progress Bridge as the tracker and Kavita content-only", () => {
   const versioning = JSON.parse(
     readFileSync(path.join(process.cwd(), "bundles", "versioning.json"), "utf8"),
   ) as { sources: Array<{ id: string; capabilities: number[] }> };
   const kavita = versioning.sources.find((source) => source.id === "Kavita");
+  const progressBridge = versioning.sources.find((source) => source.id === "ProgressBridge");
 
   assert.ok(kavita);
-  assert.ok(kavita.capabilities.includes(2));
-  assert.equal(kavita.capabilities.filter((capability) => capability === 2).length, 1);
+  assert.ok(progressBridge);
+  assert.equal(kavita.capabilities.includes(2), false);
+  assert.ok(progressBridge.capabilities.includes(2));
+  assert.equal(progressBridge.capabilities.filter((capability) => capability === 2).length, 1);
   assert.equal(kavita.capabilities.includes(103), false);
+  assert.equal(progressBridge.capabilities.includes(103), false);
 });
 
 function extensionSourceIds(srcDir: string): string[] {

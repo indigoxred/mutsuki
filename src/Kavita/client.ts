@@ -261,13 +261,16 @@ function guessMimeType(path: string): string {
 
 function sanitizedResponseMessage(body: string | ArrayBuffer): string {
   const raw = typeof body === "string" ? body : safeDecodeBody(body);
-  return raw
+  const redacted = raw
     .replace(/apiKey=[^&\s"')<>]+/giu, "apiKey=redacted")
     .replace(/x-api-key[:=]\s*[^&\s"')<>]+/giu, "x-api-key=redacted")
-    .replace(/https?:\/\/[^\s"')<>]+/giu, "redacted-url")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .slice(0, 180);
+    .replace(/https?:\/\/[^\s"')<>]+/giu, "redacted-url");
+  if (looksLikeHtml(redacted)) return "HTML error response omitted.";
+  return redacted.replace(/\s+/gu, " ").trim().slice(0, 180);
+}
+
+function looksLikeHtml(value: string): boolean {
+  return /<!doctype\s+html|<html[\s>]|<body[\s>]|<head[\s>]/iu.test(value);
 }
 
 function safeDecodeBody(body: ArrayBuffer): string {

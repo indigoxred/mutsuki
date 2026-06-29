@@ -5,10 +5,13 @@
 Mutsuki Kavita cannot currently be treated as having proven automatic
 Paperback-to-Kavita read sync.
 
-The source extension exports `MangaProgressProviding`, advertises
-`SourceIntents.PROGRESS_PROVIDING`, and its downstream queue processor works in
-unit tests. Live Paperback 0.9 device logs still show local chapter completion
-without any call to `processChapterReadActionQueue()`.
+Historical test builds of the source extension exported `MangaProgressProviding`,
+advertised `SourceIntents.PROGRESS_PROVIDING`, and had a downstream queue processor
+covered by unit tests. Live Paperback 0.9 device logs still showed local chapter
+completion without any call to `processChapterReadActionQueue()`.
+
+Current builds intentionally advertise Mutsuki Kavita as a content source only.
+`Mutsuki Progress Bridge` is the tracker/provider surface for queued read actions.
 
 The failure boundary is therefore before Kavita endpoints, before the bridge,
 and before Mutsuki's read-action mapping code.
@@ -47,18 +50,20 @@ automatically.
 
 ## Mutsuki Export Verification
 
-Automated tests assert that the exported Kavita runtime object contains:
+Automated tests assert that the exported Kavita runtime object still contains the
+historical diagnostic methods:
 
 - `getMangaProgressManagementForm`
 - `getMangaProgress`
 - `processChapterReadActionQueue`
 
-Automated tests also assert that generated `bundles/versioning.json` advertises
-capability `2` as a separate array element and does not emit the old combined
-`103` capability.
+Automated tests also assert that generated `bundles/versioning.json` does not
+advertise capability `2` for Mutsuki Kavita, that Mutsuki Progress Bridge does
+advertise capability `2` as a separate array element, and that neither extension
+emits the old combined `103` capability.
 
-The generated `bundles/Kavita/index.js` contains the progress-provider method
-names on the bundled Kavita runtime object.
+The generated Kavita manifest no longer asks Paperback to present Mutsuki Kavita
+as a tracker choice.
 
 ## Live Runtime Evidence
 
@@ -135,19 +140,19 @@ reachability with the settings button, but it cannot solve missing read actions.
 
 ## Controlled Test Matrix
 
-Current live evidence covers ordinary image manga completion with no queue
-callback. The v0.1.12 diagnostic build adds unmistakable runtime markers for the
-remaining checks.
+Current live evidence covers ordinary image manga completion with no source
+self-notification. Historical diagnostic builds added unmistakable runtime markers
+for the remaining checks.
 
 Recommended matrix:
 
-| Scenario                                                                     | Expected evidence                                                                                   |
-| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Title not saved in Paperback library                                         | No queue callback expected unless Paperback documents otherwise.                                    |
-| Title saved in Paperback library, no tracker link                            | If no `[MutsukiProgressQueue] ENTER` appears, library membership is insufficient.                   |
-| Title linked to a known working tracker                                      | Known tracker should receive progress actions if tracker setup is valid.                            |
-| Title linked to Mutsuki Kavita as a progress provider, if the app permits it | If `[MutsukiProgressQueue] ENTER` appears only here, explicit tracker/provider linking is required. |
-| Foreground, restart, and queue-processing wait after completion              | Distinguishes delayed queue processing from no queue creation.                                      |
+| Scenario                                                                                        | Expected evidence                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Title not saved in Paperback library                                                            | No queue callback expected unless Paperback documents otherwise.                                                                                    |
+| Title saved in Paperback library, no tracker link                                               | If no `[MutsukiProgressQueue] ENTER` appears, library membership is insufficient.                                                                   |
+| Title linked to a known working tracker                                                         | Known tracker should receive progress actions if tracker setup is valid.                                                                            |
+| Historical builds: title linked to Mutsuki Kavita as a progress provider, if the app permits it | If `[MutsukiProgressQueue] ENTER` appears only here, explicit tracker/provider linking is required. Current builds no longer advertise this option. |
+| Foreground, restart, and queue-processing wait after completion                                 | Distinguishes delayed queue processing from no queue creation.                                                                                      |
 
 ## Decision
 
@@ -158,12 +163,12 @@ content source solely because that source advertises `PROGRESS_PROVIDING`.
 If explicit per-title tracker linking is required, it does not satisfy
 Mutsuki's automatic workflow requirement.
 
-Mutsuki now also ships a separate `Mutsuki Progress Bridge` progress provider.
-That extension is intentionally a tracker/provider event surface rather than a
-content source. It can forward queued read actions from any source to the
-production bridge when Paperback associates the title with that tracker. It is useful
-for proving cross-source queue delivery and event shape, but it does not remove
-the manual association limitation.
+Mutsuki now ships a separate `Mutsuki Progress Bridge` progress provider. That
+extension is intentionally a tracker/provider event surface rather than a content
+source. It can forward queued read actions from any source to the production
+bridge when Paperback associates the title with that tracker. It is useful for
+cross-source event delivery and event shape, but it does not prove source
+self-notification.
 
 ## Viable Alternatives
 
@@ -178,7 +183,7 @@ the manual association limitation.
 
 ## Diagnostic Build Markers
 
-Mutsuki Kavita v0.1.12 logs:
+Historical Mutsuki Kavita diagnostic builds logged:
 
 - `[MutsukiProgressRuntime]` during extension initialization, including build id
   and method-presence booleans.

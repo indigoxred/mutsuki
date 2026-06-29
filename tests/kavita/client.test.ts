@@ -142,3 +142,31 @@ test("keeps authentication, retryable, and server resource failures fatal", asyn
     );
   }
 });
+
+test("omits raw HTML proxy error bodies from Kavita request failures", async () => {
+  const client = new KavitaClient({
+    baseUrl: "https://kavita.example.test",
+    apiKey: "secret-key",
+    transport: async () => ({
+      status: 502,
+      headers: { "content-type": "text/html" },
+      body:
+        '<!DOCTYPE html><html class="no-js ie6 oldie" lang="en-US">' +
+        "<body>Cloudflare tunnel failure apiKey=secret-key x-api-key: secret-key</body></html>",
+    }),
+  });
+
+  await assert.rejects(
+    client.searchSeries("untracked title"),
+    (error: unknown) =>
+      error instanceof KavitaRequestError &&
+      error.status === 502 &&
+      error.path === "/Search/search" &&
+      error.message.includes("Kavita request failed with transient status 502") &&
+      error.responseMessage === "HTML error response omitted." &&
+      !error.message.includes("<") &&
+      !error.message.includes("DOCTYPE") &&
+      !error.message.includes("secret-key") &&
+      !error.message.includes("Cloudflare tunnel failure"),
+  );
+});

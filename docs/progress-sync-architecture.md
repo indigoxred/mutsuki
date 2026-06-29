@@ -35,8 +35,8 @@ The source extension contains provisional code which, if Paperback supplies acti
 - deduplicate duplicate queue items for the same Kavita series/chapter pair;
 - optionally post a sanitized progress event to the local production bridge receiver.
 
-This code is not a completed automatic sync feature until the runtime queue callback is proven on
-device.
+Mutsuki Kavita is currently advertised as a content source only. The tracker/provider surface for
+read-event forwarding is **Mutsuki Progress Bridge**.
 
 The production bridge in `apps/kavita-mal-bridge` receives events at
 `POST /api/progress-events`, stores them in SQLite, and displays them under
@@ -239,13 +239,8 @@ To test real queued read actions through the tracker/provider surface:
 
 This proves tracker queue delivery. It does not prove source self-notification.
 
-To test the blocked read-event boundary:
-
-1. Enable Mutsuki Kavita debug logging.
-2. Confirm startup logs contain `[MutsukiProgressRuntime]`.
-3. Complete an ordinary image manga chapter.
-4. Foreground/restart Paperback and wait for queue processing.
-5. Look for `[MutsukiProgressQueue] ENTER`.
+Historical builds tested whether Mutsuki Kavita could act as a progress provider directly. Current
+builds no longer advertise that capability; use Mutsuki Progress Bridge for tracker queue tests.
 
 If the runtime marker appears but the queue marker does not, Paperback loaded the exported provider
 object but did not dispatch read actions to the Kavita source.

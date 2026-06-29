@@ -1,3 +1,3 @@
-export const MUTSUKI_KAVITA_VERSION = "0.1.17";
+export const MUTSUKI_KAVITA_VERSION = "0.1.18";
 export const MUTSUKI_KAVITA_SHORT_SHA = "source-manga";
 export const MUTSUKI_KAVITA_BUILD = `${MUTSUKI_KAVITA_VERSION}+${MUTSUKI_KAVITA_SHORT_SHA}`;

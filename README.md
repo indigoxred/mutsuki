@@ -69,11 +69,11 @@ Offsets are supported in the policy model for mismatched Kavita/MAL numbering. S
 
 ## Automatic Progress Sync Feasibility
 
-Mutsuki Kavita implements Paperback's progress-provider method shape, and the generated manifest
-advertises `PROGRESS_PROVIDING`. Live Paperback testing currently shows completed reads updating
-Paperback's local progress without invoking Mutsuki Kavita's progress queue method. Automatic
-Paperback-to-Kavita read sync is therefore blocked until Paperback can deliver a read-completion
-callback to the original source or to an automatically associated provider.
+Mutsuki Kavita is advertised as a content source, not as the tracker users should select for
+Paperback progress sync. The generated Kavita manifest intentionally does not advertise
+`PROGRESS_PROVIDING`; use **Mutsuki Progress Bridge** for tracker association and read-event
+forwarding. Automatic Paperback-to-Kavita read sync remains blocked until Paperback can deliver a
+read-completion callback to the original source or to an automatically associated provider.
 
 The settings action **Send bridge test event** posts one synthetic diagnostic event to the configured
 production bridge. It only proves iOS/Paperback networking to the bridge; it is not a read-sync
